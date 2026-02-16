@@ -1,6 +1,6 @@
 // ============================================================
-//  JEDAI Space Pong — Game Engine
-//  A love letter to the 1972 Atari original by Allan Alcorn
+//  JEDAI Space Tennis — Game Engine
+//  Tennis in space, plays like Pong — where it all started
 // ============================================================
 
 import { AudioEngine } from './audio';
@@ -20,7 +20,7 @@ const AI_SPEEDS = [3.5, 5.5, 8];
 const AI_NAMES = ['EASY', 'MEDIUM', 'HARD'];
 
 const POWERUP_TYPES: PowerUpDef[] = [
-  { type: 'big',   label: 'BIG', color: '#00ff88', desc: 'PADDLE GROW', duration: 8 },
+  { type: 'big',   label: 'BIG', color: '#00ff88', desc: 'RACKET GROW', duration: 8 },
   { type: 'small', label: 'SML', color: '#ff4488', desc: 'FOE SHRINK',  duration: 8 },
   { type: 'fast',  label: 'FST', color: '#ffaa00', desc: 'SPEED BALL',  duration: 6 },
   { type: 'slow',  label: 'SLO', color: '#8844ff', desc: 'SLOW BALL',   duration: 6 },
@@ -583,57 +583,155 @@ export class PongEngine {
 
   private drawCourt() {
     const ctx = this.ctx;
-    ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
-    ctx.lineWidth = 2;
+
+    // Court surface — subtle green tint in space
+    ctx.fillStyle = 'rgba(0, 60, 30, 0.12)';
+    ctx.fillRect(15, 15, W - 30, H - 30);
+
+    // Outer boundary (baselines + sidelines) — white like real tennis
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.lineWidth = 2.5;
     ctx.strokeRect(15, 15, W - 30, H - 30);
 
-    // Center dashed line (like original Pong)
-    ctx.strokeStyle = 'rgba(0, 255, 255, 0.25)';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([12, 12]);
+    // Net — center vertical line (thicker, solid, like a real net)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(W / 2, 20);
-    ctx.lineTo(W / 2, H - 20);
+    ctx.moveTo(W / 2, 15);
+    ctx.lineTo(W / 2, H - 15);
     ctx.stroke();
-    ctx.setLineDash([]);
 
-    // Center circle
-    ctx.strokeStyle = 'rgba(0, 255, 255, 0.12)';
+    // Net cross-hatching for texture
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 0.5;
+    for (let ny = 20; ny < H - 20; ny += 12) {
+      ctx.beginPath();
+      ctx.moveTo(W / 2 - 4, ny);
+      ctx.lineTo(W / 2 + 4, ny);
+      ctx.stroke();
+    }
+
+    // Net post markers (top and bottom)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fillRect(W / 2 - 3, 12, 6, 6);
+    ctx.fillRect(W / 2 - 3, H - 18, 6, 6);
+
+    // Service line left
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(W / 2, H / 2, 60, 0, Math.PI * 2);
+    ctx.moveTo(W * 0.3, 15);
+    ctx.lineTo(W * 0.3, H - 15);
+    ctx.stroke();
+
+    // Service line right
+    ctx.beginPath();
+    ctx.moveTo(W * 0.7, 15);
+    ctx.lineTo(W * 0.7, H - 15);
+    ctx.stroke();
+
+    // Center service line (horizontal through middle of each service box)
+    ctx.beginPath();
+    ctx.moveTo(W * 0.3, H / 2);
+    ctx.lineTo(W / 2, H / 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(W / 2, H / 2);
+    ctx.lineTo(W * 0.7, H / 2);
+    ctx.stroke();
+
+    // Center marks on baselines (small tick marks)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(15, H / 2 - 8);
+    ctx.lineTo(15, H / 2 + 8);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(W - 15, H / 2 - 8);
+    ctx.lineTo(W - 15, H / 2 + 8);
+    ctx.stroke();
+
+    // Doubles tramlines (inner sidelines)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(15, 45);
+    ctx.lineTo(W - 15, 45);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(15, H - 45);
+    ctx.lineTo(W - 15, H - 45);
     ctx.stroke();
   }
 
   private drawPaddle(paddle: Paddle, h: number) {
     const ctx = this.ctx;
     const { x, y, color1, color2, glowColor } = paddle;
+
+    // Racket head (oval shape)
+    const cx = x + PADDLE_W / 2;
+    const cy = y + h / 2;
+    const rx = PADDLE_W * 0.9;  // horizontal radius
+    const ry = h / 2;           // vertical radius
+
+    // Glow
+    ctx.shadowBlur = 22;
+    ctx.shadowColor = glowColor;
+
+    // Racket frame
     const grad = ctx.createLinearGradient(x, y, x + PADDLE_W, y + h);
     grad.addColorStop(0, color1);
     grad.addColorStop(0.5, color2);
     grad.addColorStop(1, color1);
-
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = glowColor;
-    ctx.fillStyle = grad;
-
-    const r = PADDLE_W / 2;
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + PADDLE_W - r, y);
-    ctx.arcTo(x + PADDLE_W, y, x + PADDLE_W, y + r, r);
-    ctx.lineTo(x + PADDLE_W, y + h - r);
-    ctx.arcTo(x + PADDLE_W, y + h, x + PADDLE_W - r, y + h, r);
-    ctx.lineTo(x + r, y + h);
-    ctx.arcTo(x, y + h, x, y + h - r, r);
-    ctx.lineTo(x, y + r);
-    ctx.arcTo(x, y, x + r, y, r);
-    ctx.closePath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Racket strings — vertical
+    ctx.strokeStyle = `${glowColor}33`;
+    ctx.lineWidth = 0.8;
+    const stringCount = 5;
+    for (let i = 1; i < stringCount; i++) {
+      const sy = y + (h / stringCount) * i;
+      // Calculate x extent of ellipse at this y
+      const relY = (sy - cy) / ry;
+      if (Math.abs(relY) >= 1) continue;
+      const xExtent = rx * Math.sqrt(1 - relY * relY);
+      ctx.beginPath();
+      ctx.moveTo(cx - xExtent, sy);
+      ctx.lineTo(cx + xExtent, sy);
+      ctx.stroke();
+    }
+
+    // Racket strings — horizontal
+    const hStringCount = 3;
+    for (let i = 1; i < hStringCount; i++) {
+      const sx = x + (PADDLE_W / hStringCount) * i;
+      const relX = (sx - cx) / rx;
+      if (Math.abs(relX) >= 1) continue;
+      const yExtent = ry * Math.sqrt(1 - relX * relX);
+      ctx.beginPath();
+      ctx.moveTo(sx, cy - yExtent);
+      ctx.lineTo(sx, cy + yExtent);
+      ctx.stroke();
+    }
+
+    // Racket handle — small line extending from bottom of paddle
+    ctx.strokeStyle = glowColor;
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.4;
+    const handleDir = paddle === this.paddleLeft ? -1 : 1;
+    // No handle needed vertically, just a subtle grip dot
+    ctx.fillStyle = glowColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2, 0, Math.PI * 2);
     ctx.fill();
+    ctx.globalAlpha = 1;
 
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(x + 2, y + 4, 3, h - 8);
   }
 
   private drawBallTrail(b: Ball, color: string) {
@@ -653,17 +751,32 @@ export class PongEngine {
 
   private drawBallObj(b: Ball, color: string, glow: string) {
     const ctx = this.ctx;
+    // Tennis ball — bright yellow-green
+    const tennisBallColor = color === '#fff' ? '#CCFF00' : color;
+    const tennisGlow = glow === '#ffffff' ? '#AADD00' : glow;
+
     ctx.shadowBlur = 25;
-    ctx.shadowColor = glow;
-    ctx.fillStyle = color;
+    ctx.shadowColor = tennisGlow;
+    ctx.fillStyle = tennisBallColor;
     ctx.beginPath();
     ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
     ctx.fill();
 
+    // Tennis ball seam — curved line across the ball
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(b.x - 2, b.y - 2, BALL_R * 0.35, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y, BALL_R * 0.7, -0.8, 0.8);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, BALL_R * 0.7, Math.PI - 0.8, Math.PI + 0.8);
+    ctx.stroke();
+
+    // Highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.arc(b.x - 2, b.y - 2, BALL_R * 0.3, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -853,27 +966,28 @@ export class PongEngine {
     ctx.fillText('JEDAI', W/2, H/2 - 80);
 
     ctx.font = '28px Orbitron, sans-serif';
-    ctx.fillStyle = '#ff4488';
-    ctx.shadowColor = '#ff0044';
-    ctx.fillText('SPACE PONG', W/2, H/2 - 35);
+    ctx.fillStyle = '#CCFF00';
+    ctx.shadowColor = '#88AA00';
+    ctx.fillText('SPACE TENNIS', W/2, H/2 - 35);
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
 
-    // Demo ball
+    // Demo tennis ball (yellow-green)
     const dx = W/2 + Math.sin(t * 3) * 180;
     const dy = H/2 + 30 + Math.sin(t * 4.7) * 60;
-    ctx.fillStyle = '#fff';
-    ctx.shadowBlur = 15; ctx.shadowColor = '#fff';
+    ctx.fillStyle = '#CCFF00';
+    ctx.shadowBlur = 15; ctx.shadowColor = '#AADD00';
     ctx.beginPath(); ctx.arc(dx, dy, 6, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Demo paddles
+    // Demo rackets
     const lpy = H/2 + 30 + Math.sin(t * 4.7) * 50 - 30;
     const rpy = H/2 + 30 + Math.sin(t * 4.7 + 0.3) * 50 - 30;
-    ctx.fillStyle = '#ff0044'; ctx.shadowBlur = 10; ctx.shadowColor = '#ff0044';
-    ctx.fillRect(W/2 - 200, lpy, 8, 60);
-    ctx.fillStyle = '#00ffff'; ctx.shadowColor = '#00ffff';
-    ctx.fillRect(W/2 + 192, rpy, 8, 60);
+    ctx.strokeStyle = '#ff0044'; ctx.shadowBlur = 10; ctx.shadowColor = '#ff0044';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(W/2 - 196, lpy + 30, 6, 30, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = '#00ffff'; ctx.shadowColor = '#00ffff';
+    ctx.beginPath(); ctx.ellipse(W/2 + 196, rpy + 30, 6, 30, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.shadowBlur = 0;
 
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -888,8 +1002,8 @@ export class PongEngine {
 
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.font = '8px "Press Start 2P", monospace';
-    ctx.fillText('ORIGINAL PONG BY ATARI  1972', W/2, H - 30);
-    ctx.fillText('JEDAI SPACE EDITION', W/2, H - 15);
+    ctx.fillText('INSPIRED BY PONG  ATARI  1972', W/2, H - 30);
+    ctx.fillText('JEDAI SPACE TENNIS EDITION', W/2, H - 15);
   }
 
   private drawModeSelect() {
@@ -1217,8 +1331,8 @@ export class PongEngine {
         this.drawCourt();
         this.drawPaddle(this.paddleLeft, this.getPaddleH('left'));
         this.drawPaddle(this.paddleRight, this.getPaddleH('right'));
-        this.drawBallTrail(this.ball, '#ffffff');
-        for (const eb of this.extraBalls) this.drawBallTrail(eb, 'rgba(255,200,255,0.7)');
+        this.drawBallTrail(this.ball, '#CCFF00');
+        for (const eb of this.extraBalls) this.drawBallTrail(eb, 'rgba(200,255,0,0.7)');
         this.drawBallObj(this.ball, '#fff', '#ffffff');
         for (const eb of this.extraBalls) this.drawBallObj(eb, '#ff88ff', '#ff44ff');
         this.drawGoldBall();

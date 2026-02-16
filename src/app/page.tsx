@@ -32,7 +32,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="relative z-10 mt-6 mb-4 text-center">
         <p className="text-[10px] text-cyan-400/20" style={{ fontFamily: '"Press Start 2P", monospace' }}>
-          JEDAI SPACE PONG &middot; ORIGINAL PONG BY ATARI 1972
+          JEDAI SPACE TENNIS &middot; INSPIRED BY PONG  ATARI 1972
         </p>
       </footer>
     </main>
