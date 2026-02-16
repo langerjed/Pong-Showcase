@@ -66,11 +66,11 @@ export class PongEngine {
   // Paddles
   private paddleLeft: Paddle = {
     x: 30, y: H / 2 - PADDLE_H / 2, vy: 0,
-    color1: '#ff0044', color2: '#ff66aa', glowColor: '#ff0044', name: 'CPU',
+    color1: '#ef4444', color2: '#f87171', glowColor: '#ef4444', name: 'CPU',
   };
   private paddleRight: Paddle = {
     x: W - 30 - PADDLE_W, y: H / 2 - PADDLE_H / 2, vy: 0,
-    color1: '#00ffff', color2: '#66ffff', glowColor: '#00ffff', name: 'P1',
+    color1: '#3b82f6', color2: '#60a5fa', glowColor: '#3b82f6', name: 'P1',
   };
 
   // Ball
@@ -835,8 +835,8 @@ export class PongEngine {
 
   private drawHUD() {
     const ctx = this.ctx;
-    this.drawScoreDisplay(this.scoreLeft, W/2 - 120, 35, '#ff4488', '#ff0044');
-    this.drawScoreDisplay(this.scoreRight, W/2 + 50, 35, '#00ffff', '#0088ff');
+    this.drawScoreDisplay(this.scoreLeft, W/2 - 120, 35, '#f87171', '#ef4444');
+    this.drawScoreDisplay(this.scoreRight, W/2 + 50, 35, '#60a5fa', '#3b82f6');
 
     ctx.font = '10px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
@@ -958,9 +958,11 @@ export class PongEngine {
 
     const pulse = Math.sin(t * 2) * 0.15 + 0.85;
     ctx.globalAlpha = pulse;
-    ctx.fillStyle = '#00ffff';
-    ctx.shadowBlur = 30;
-    ctx.shadowColor = '#00ffff';
+
+    // JEDAI brand blue (#3b82f6) as primary
+    ctx.fillStyle = '#3b82f6';
+    ctx.shadowBlur = 35;
+    ctx.shadowColor = '#3b82f6';
     ctx.font = '62px Orbitron, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('JEDAI', W/2, H/2 - 80);
@@ -968,9 +970,15 @@ export class PongEngine {
     ctx.font = '28px Orbitron, sans-serif';
     ctx.fillStyle = '#CCFF00';
     ctx.shadowColor = '#88AA00';
+    ctx.shadowBlur = 20;
     ctx.fillText('SPACE TENNIS', W/2, H/2 - 35);
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
+
+    // Tagline from jedai.biz brand
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+    ctx.font = '9px "Press Start 2P", monospace';
+    ctx.fillText('THE DIGITAL HOLOCRON OF AI', W/2, H/2 - 10);
 
     // Demo tennis ball (yellow-green)
     const dx = W/2 + Math.sin(t * 3) * 180;
@@ -983,10 +991,10 @@ export class PongEngine {
     // Demo rackets
     const lpy = H/2 + 30 + Math.sin(t * 4.7) * 50 - 30;
     const rpy = H/2 + 30 + Math.sin(t * 4.7 + 0.3) * 50 - 30;
-    ctx.strokeStyle = '#ff0044'; ctx.shadowBlur = 10; ctx.shadowColor = '#ff0044';
+    ctx.strokeStyle = '#ff4466'; ctx.shadowBlur = 10; ctx.shadowColor = '#ff4466';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.ellipse(W/2 - 196, lpy + 30, 6, 30, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = '#00ffff'; ctx.shadowColor = '#00ffff';
+    ctx.strokeStyle = '#3b82f6'; ctx.shadowColor = '#3b82f6';
     ctx.beginPath(); ctx.ellipse(W/2 + 196, rpy + 30, 6, 30, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.shadowBlur = 0;
 
@@ -1003,7 +1011,7 @@ export class PongEngine {
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.font = '8px "Press Start 2P", monospace';
     ctx.fillText('INSPIRED BY PONG  ATARI  1972', W/2, H - 30);
-    ctx.fillText('JEDAI SPACE TENNIS EDITION', W/2, H - 15);
+    ctx.fillText('JEDAI.BIZ  SPACE TENNIS', W/2, H - 15);
   }
 
   private drawModeSelect() {
@@ -1012,8 +1020,8 @@ export class PongEngine {
     const ctx = this.ctx;
     const t = this.time;
 
-    ctx.fillStyle = '#00ffff';
-    ctx.shadowBlur = 20; ctx.shadowColor = '#00ffff';
+    ctx.fillStyle = '#3b82f6';
+    ctx.shadowBlur = 20; ctx.shadowColor = '#3b82f6';
     ctx.font = '28px Orbitron, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('SELECT MODE', W/2, 100);
@@ -1025,13 +1033,13 @@ export class PongEngine {
       const y = 220 + i * 80;
 
       if (selected) {
-        ctx.fillStyle = 'rgba(0, 255, 255, 0.08)';
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
         ctx.fillRect(W/2 - 200, y - 25, 400, 50);
-        ctx.strokeStyle = '#00ffff';
+        ctx.strokeStyle = '#3b82f6';
         ctx.lineWidth = 2;
         ctx.strokeRect(W/2 - 200, y - 25, 400, 50);
         const ap = Math.sin(t * 5) * 5;
-        ctx.fillStyle = '#00ffff';
+        ctx.fillStyle = '#3b82f6';
         ctx.font = '16px "Press Start 2P", monospace';
         ctx.fillText('>', W/2 - 180 + ap, y + 6);
       }
@@ -1060,8 +1068,8 @@ export class PongEngine {
     const ctx = this.ctx;
     const t = this.time;
 
-    ctx.fillStyle = '#00ffff';
-    ctx.shadowBlur = 20; ctx.shadowColor = '#00ffff';
+    ctx.fillStyle = '#3b82f6';
+    ctx.shadowBlur = 20; ctx.shadowColor = '#3b82f6';
     ctx.font = '24px Orbitron, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('SELECT DIFFICULTY', W/2, 100);
@@ -1134,7 +1142,8 @@ export class PongEngine {
 
   private drawGoalFlash() {
     const ctx = this.ctx;
-    const progress = 1 - (this.goalTimer / 1.2);
+    const maxTimer = (this.scoreLeft >= WIN_SCORE || this.scoreRight >= WIN_SCORE) ? 2 : 1.2;
+    const progress = 1 - (this.goalTimer / maxTimer);
     ctx.globalAlpha = Math.max(0, 0.3 * (1 - progress));
     ctx.fillStyle = this.goalScorer === 'left' ? '#ff0044' : '#00ffff';
     ctx.fillRect(0, 0, W, H);
@@ -1207,8 +1216,8 @@ export class PongEngine {
 
     const pulse = Math.sin(this.time * 2) * 0.15 + 0.85;
     ctx.globalAlpha = pulse;
-    ctx.fillStyle = '#00ffff';
-    ctx.shadowBlur = 20; ctx.shadowColor = '#00ffff';
+    ctx.fillStyle = '#3b82f6';
+    ctx.shadowBlur = 20; ctx.shadowColor = '#3b82f6';
     ctx.font = '36px Orbitron, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('PAUSED', W/2, H/2 - 20);

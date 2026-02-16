@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Press+Start+2P&display=swap');
 
 :root {
   --background: #000000;
@@ -70,9 +69,9 @@ body {
   box-shadow:
     inset 0 0 80px rgba(0,0,0,0.6),
     inset 0 0 160px rgba(0,0,0,0.3),
-    0 0 40px rgba(0, 255, 255, 0.15),
-    0 0 80px rgba(0, 255, 255, 0.08),
-    0 0 120px rgba(0, 255, 255, 0.04);
+    0 0 40px rgba(59, 130, 246, 0.15),
+    0 0 80px rgba(59, 130, 246, 0.08),
+    0 0 120px rgba(59, 130, 246, 0.04);
 }
 
 .crt-bezel {
@@ -108,4 +107,4 @@ body {
 /* ---- Scrollbar ---- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #000; }
-::-webkit-scrollbar-thumb { background: #00ffff33; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #3b82f633; border-radius: 3px; }
