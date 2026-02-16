@@ -7,10 +7,10 @@ const PongGame = dynamic(() => import('@/components/PongGame'), {
   loading: () => (
     <div className="flex items-center justify-center h-screen bg-black">
       <div className="text-center">
-        <h1 className="text-4xl text-cyan-400 mb-4" style={{ fontFamily: 'Orbitron, sans-serif', textShadow: '0 0 20px #00ffff' }}>
+        <h1 className="text-4xl text-blue-400 mb-4" style={{ fontFamily: 'Orbitron, sans-serif', textShadow: '0 0 20px #3b82f6' }}>
           JEDAI
         </h1>
-        <p className="text-cyan-400/50 text-sm animate-pulse" style={{ fontFamily: '"Press Start 2P", monospace' }}>
+        <p className="text-blue-400/50 text-sm animate-pulse" style={{ fontFamily: '"Press Start 2P", monospace' }}>
           LOADING...
         </p>
       </div>
@@ -31,7 +31,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="relative z-10 mt-6 mb-4 text-center">
-        <p className="text-[10px] text-cyan-400/20" style={{ fontFamily: '"Press Start 2P", monospace' }}>
+        <p className="text-[10px] text-blue-400/20" style={{ fontFamily: '"Press Start 2P", monospace' }}>
           JEDAI SPACE TENNIS &middot; INSPIRED BY PONG  ATARI 1972
         </p>
       </footer>

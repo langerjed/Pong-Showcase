@@ -382,13 +382,13 @@ export class PongEngine {
       b.y = 20 + BALL_R;
       b.vy = Math.abs(b.vy);
       this.audio.wallHit();
-      this.emitParticles(b.x, b.y, '#00ffff', 5, 80, 0.3, 2);
+      this.emitParticles(b.x, b.y, '#ffffff', 5, 80, 0.3, 2);
     }
     if (b.y + BALL_R > H - 20) {
       b.y = H - 20 - BALL_R;
       b.vy = -Math.abs(b.vy);
       this.audio.wallHit();
-      this.emitParticles(b.x, b.y, '#00ffff', 5, 80, 0.3, 2);
+      this.emitParticles(b.x, b.y, '#ffffff', 5, 80, 0.3, 2);
     }
 
     // Paddle collisions
@@ -417,7 +417,7 @@ export class PongEngine {
         this.scoreRight++;
         this.goalScorer = 'right';
         this.audio.score();
-        this.emitParticles(50, H/2, '#ff0044', 30, 200, 0.8, 4);
+        this.emitParticles(50, H/2, '#ef4444', 30, 200, 0.8, 4);
         this.triggerShake(8);
         this.onGoal();
       }
@@ -428,7 +428,7 @@ export class PongEngine {
         this.scoreLeft++;
         this.goalScorer = 'left';
         this.audio.score();
-        this.emitParticles(W - 50, H/2, '#00ffff', 30, 200, 0.8, 4);
+        this.emitParticles(W - 50, H/2, '#3b82f6', 30, 200, 0.8, 4);
         this.triggerShake(8);
         this.onGoal();
       }
@@ -719,12 +719,8 @@ export class PongEngine {
       ctx.stroke();
     }
 
-    // Racket handle — small line extending from bottom of paddle
-    ctx.strokeStyle = glowColor;
-    ctx.lineWidth = 3;
+    // Racket sweet spot — subtle center dot
     ctx.globalAlpha = 0.4;
-    const handleDir = paddle === this.paddleLeft ? -1 : 1;
-    // No handle needed vertically, just a subtle grip dot
     ctx.fillStyle = glowColor;
     ctx.beginPath();
     ctx.arc(cx, cy, 2, 0, Math.PI * 2);
@@ -1145,7 +1141,7 @@ export class PongEngine {
     const maxTimer = (this.scoreLeft >= WIN_SCORE || this.scoreRight >= WIN_SCORE) ? 2 : 1.2;
     const progress = 1 - (this.goalTimer / maxTimer);
     ctx.globalAlpha = Math.max(0, 0.3 * (1 - progress));
-    ctx.fillStyle = this.goalScorer === 'left' ? '#ff0044' : '#00ffff';
+    ctx.fillStyle = this.goalScorer === 'left' ? '#ef4444' : '#3b82f6';
     ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
   }
@@ -1159,12 +1155,12 @@ export class PongEngine {
 
     // Continual confetti
     if (Math.random() < 0.3) {
-      const colors = ['#ff0044', '#00ffff', '#FFD700', '#ff66aa', '#66ffff'];
+      const colors = ['#ef4444', '#3b82f6', '#FFD700', '#CCFF00', '#60a5fa'];
       this.emitParticles(Math.random() * W, Math.random() * 100, colors[Math.floor(Math.random()*5)], 1, 50, 1.5, 3);
     }
 
     const leftWon = this.scoreLeft >= WIN_SCORE;
-    const winColor = leftWon ? '#ff4488' : '#00ffff';
+    const winColor = leftWon ? '#f87171' : '#60a5fa';
     let winText: string;
     if (this.twoPlayer) {
       winText = leftWon ? 'PLAYER 1 WINS!' : 'PLAYER 2 WINS!';
