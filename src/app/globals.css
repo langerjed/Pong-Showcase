@@ -1,0 +1,111 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Press+Start+2P&display=swap');
+
+:root {
+  --background: #000000;
+  --foreground: #ededed;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #000;
+  color: var(--foreground);
+  font-family: 'Press Start 2P', monospace;
+  overflow-x: hidden;
+}
+
+/* ---- Game wrapper & CRT effect ---- */
+.game-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: flicker 0.15s infinite alternate;
+  cursor: pointer;
+}
+
+.game-canvas {
+  display: block;
+  image-rendering: pixelated;
+  width: min(88vw, calc(88vh * 4 / 3));
+  height: min(88vh, calc(88vw * 3 / 4));
+  border-radius: 12px;
+}
+
+.crt-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 10;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15) 0px,
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  border-radius: 12px;
+}
+
+.crt-vignette {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 11;
+  border-radius: 12px;
+  box-shadow:
+    inset 0 0 80px rgba(0,0,0,0.6),
+    inset 0 0 160px rgba(0,0,0,0.3),
+    0 0 40px rgba(0, 255, 255, 0.15),
+    0 0 80px rgba(0, 255, 255, 0.08),
+    0 0 120px rgba(0, 255, 255, 0.04);
+}
+
+.crt-bezel {
+  position: absolute;
+  top: -12px; left: -12px;
+  right: -12px; bottom: -12px;
+  border: 3px solid #222;
+  border-radius: 18px;
+  box-shadow:
+    inset 0 0 30px rgba(0,0,0,0.8),
+    0 0 2px #444;
+  pointer-events: none;
+  z-index: 12;
+  background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 50%, #1a1a1a 100%);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  padding: 12px;
+}
+
+@keyframes flicker {
+  0% { opacity: 0.97; }
+  5% { opacity: 0.95; }
+  10% { opacity: 0.98; }
+  15% { opacity: 0.96; }
+  20% { opacity: 0.99; }
+  50% { opacity: 0.96; }
+  80% { opacity: 0.98; }
+  100% { opacity: 0.97; }
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #000; }
+::-webkit-scrollbar-thumb { background: #00ffff33; border-radius: 3px; }
