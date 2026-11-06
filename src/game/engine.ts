@@ -1,6 +1,5 @@
 // ============================================================
-//  JEDAI Space Tennis — Game Engine
-//  Tennis in space, plays like Pong — where it all started
+//  Pong Showcase — Space Tennis game engine
 // ============================================================
 
 import { AudioEngine } from './audio';
@@ -955,32 +954,31 @@ export class PongEngine {
     const pulse = Math.sin(t * 2) * 0.15 + 0.85;
     ctx.globalAlpha = pulse;
 
-    // JEDAI brand blue (#3b82f6) as primary
-    ctx.fillStyle = '#3b82f6';
+    // Acid-lime title treatment matches the refreshed showcase palette.
+    ctx.fillStyle = '#d7fa59';
     ctx.shadowBlur = 35;
-    ctx.shadowColor = '#3b82f6';
+    ctx.shadowColor = '#d7fa59';
     ctx.font = '62px Orbitron, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('JEDAI', W/2, H/2 - 80);
+    ctx.fillText('PONG', W/2, H/2 - 80);
 
     ctx.font = '28px Orbitron, sans-serif';
-    ctx.fillStyle = '#CCFF00';
-    ctx.shadowColor = '#88AA00';
+    ctx.fillStyle = '#f5f5f0';
+    ctx.shadowColor = '#d7fa59';
     ctx.shadowBlur = 20;
-    ctx.fillText('SPACE TENNIS', W/2, H/2 - 35);
+    ctx.fillText('SHOWCASE', W/2, H/2 - 35);
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
 
-    // Tagline from jedai.biz brand
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+    ctx.fillStyle = 'rgba(245, 245, 240, 0.48)';
     ctx.font = '9px "Press Start 2P", monospace';
-    ctx.fillText('THE DIGITAL HOLOCRON OF AI', W/2, H/2 - 10);
+    ctx.fillText('A GAME OF PERFECT TIMING', W/2, H/2 - 10);
 
     // Demo tennis ball (yellow-green)
     const dx = W/2 + Math.sin(t * 3) * 180;
     const dy = H/2 + 30 + Math.sin(t * 4.7) * 60;
-    ctx.fillStyle = '#CCFF00';
-    ctx.shadowBlur = 15; ctx.shadowColor = '#AADD00';
+    ctx.fillStyle = '#d7fa59';
+    ctx.shadowBlur = 15; ctx.shadowColor = '#d7fa59';
     ctx.beginPath(); ctx.arc(dx, dy, 6, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
 
@@ -996,7 +994,7 @@ export class PongEngine {
 
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '10px "Press Start 2P", monospace';
-    ctx.fillText('WHERE VIDEO GAMES ALL STARTED', W/2, H/2 + 120);
+    ctx.fillText('THE RALLY STARTS HERE', W/2, H/2 + 120);
 
     if (Math.sin(t * 3) > 0) {
       ctx.fillStyle = '#fff';
@@ -1006,8 +1004,8 @@ export class PongEngine {
 
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.font = '8px "Press Start 2P", monospace';
-    ctx.fillText('INSPIRED BY PONG  ATARI  1972', W/2, H - 30);
-    ctx.fillText('JEDAI.BIZ  SPACE TENNIS', W/2, H - 15);
+    ctx.fillText('INSPIRED BY ATARI 1972', W/2, H - 30);
+    ctx.fillText('PONG SHOWCASE  /  SPACE TENNIS', W/2, H - 15);
   }
 
   private drawModeSelect() {

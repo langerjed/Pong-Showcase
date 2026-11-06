@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "JEDAI Space Tennis",
-  description: "The ultimate retro space tennis experience — where video games all started. Built with Next.js.",
-  keywords: ["pong", "tennis", "arcade", "retro", "game", "jedai", "space"],
+  title: "Pong Showcase — Simple game. Endless rally.",
+  description: "A fresh take on the original arcade classic. Pick your side, find your rhythm, and send it back.",
+  keywords: ["pong", "tennis", "arcade", "retro", "game", "showcase"],
 };
 
 export default function RootLayout({
@@ -15,10 +15,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <link
-          href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Press+Start+2P&display=swap"
-          rel="stylesheet"
-        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </head>
       <body className="antialiased">
         {children}
