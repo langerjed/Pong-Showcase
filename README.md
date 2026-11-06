@@ -34,3 +34,13 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Game controls
+
+- Player vs CPU: Arrow keys move, `Z` slices, `X` uses stop-spin, `C` spends a full power meter, and `Space` serves.
+- Local two-player: Player 1 uses `W`/`S` and `A`/`D`/`F`; Player 2 uses the arrow keys and `Z`/`X`/`C`.
+- Toggle spoken play-by-play with the Voice button.
+
+## Optional AI announcer
+
+Local event-based commentary works by default. To enable model-generated callouts, copy `.env.example` to `.env.local`, add a server-side `OPENAI_API_KEY`, and restart Next.js. The announcer sends only the current score, shot type, rally length, and a coarse player aim tendency when a point or special shot occurs. It uses the OpenAI Responses API and defaults to `gpt-6-luna`; set `OPENAI_ANNOUNCER_MODEL` to choose another model. Keep the API key on the server and out of browser code.

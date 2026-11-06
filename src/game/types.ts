@@ -7,6 +7,7 @@ export enum GameState {
   MODE_SELECT = 'mode_select',
   DIFFICULTY = 'difficulty',
   COUNTDOWN = 'countdown',
+  SERVE = 'serve',
   PLAYING = 'playing',
   GOAL = 'goal',
   GAME_OVER = 'game_over',
@@ -29,9 +30,22 @@ export interface Ball {
   vx: number;
   vy: number;
   speed: number;
+  spin: number;
   trail: { x: number; y: number }[];
   lastHitBy: 'left' | 'right' | null;
   frozen: boolean;
+}
+
+export type ShotType = 'normal' | 'slice' | 'stopspin' | 'power';
+
+export interface AnnouncerEvent {
+  kind: 'point' | 'shot' | 'long-rally';
+  shooter: 'PLAYER' | 'CPU' | 'P1' | 'P2';
+  shot: ShotType;
+  scoreLeft: number;
+  scoreRight: number;
+  rallyHits: number;
+  playerRead: string;
 }
 
 export interface GoldBall {

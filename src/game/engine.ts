@@ -4,9 +4,10 @@
 
 import { AudioEngine } from './audio';
 import {
-  GameState, Paddle, Ball, GoldBall, PowerUpDef,
+  GameState, Paddle, Ball, GoldBall, PowerUpDef, ShotType, AnnouncerEvent,
   PowerUpInstance, ActivePowerUp, Particle, Star,
 } from './types';
+import { applySpin, calculateServe, calculateShot, predictInterceptY } from './physics';
 
 // --- Constants ---
 const W = 800, H = 600;
@@ -15,7 +16,7 @@ const WIN_SCORE = 11;
 const COUNTDOWN_SECS = 3;
 const GOLD_SPAWN_DELAY = 8;
 const POWERUP_SPAWN_DELAY = 15;
-const AI_SPEEDS = [3.5, 5.5, 8];
+const AI_SPEEDS = [3.5, 5.2, 7.2];
 const AI_NAMES = ['EASY', 'MEDIUM', 'HARD'];
 
 const POWERUP_TYPES: PowerUpDef[] = [
@@ -47,6 +48,8 @@ export class PongEngine {
   private countdownTimer = 0;
   private goalTimer = 0;
   private goalScorer: 'left' | 'right' = 'left';
+  private serveSide: 'left' | 'right' = 'right';
+  private serveWait = 0;
 
   // Mode
   twoPlayer = false;
@@ -74,7 +77,7 @@ export class PongEngine {
 
   // Ball
   private ball: Ball = {
-    x: W/2, y: H/2, vx: 0, vy: 0, speed: 5.5,
+    x: W/2, y: H/2, vx: 0, vy: 0, speed: 4.55, spin: 0,
     trail: [], lastHitBy: null, frozen: true,
   };
   private extraBalls: Ball[] = [];
@@ -85,6 +88,11 @@ export class PongEngine {
   private powerUp: PowerUpInstance | null = null;
   private powerUpTimer = POWERUP_SPAWN_DELAY;
   private activePowerUps: ActivePowerUp[] = [];
+  private chargeLeft = 0;
+  private chargeRight = 0;
+  private playerAimHistory: number[] = [];
+  private rallyHits = 0;
+  private longRallyAnnounced = false;
 
   // Particles & effects
   private particles: Particle[] = [];
@@ -100,6 +108,7 @@ export class PongEngine {
 
   // Callback for React state sync
   onStateChange?: (state: GameState) => void;
+  onAnnouncer?: (event: AnnouncerEvent) => void;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -217,6 +226,10 @@ export class PongEngine {
         }
         break;
 
+      case GameState.SERVE:
+        if (e.key === ' ') this.launchServe();
+        break;
+
       case GameState.PAUSED:
         if (e.key === 'Escape' || e.key === 'p' || e.key === 'P' || e.key === ' ') {
           this.state = GameState.PLAYING;
@@ -261,6 +274,11 @@ export class PongEngine {
     this.powerUp = null;
     this.powerUpTimer = POWERUP_SPAWN_DELAY;
     this.activePowerUps = [];
+    this.chargeLeft = 0;
+    this.chargeRight = 0;
+    this.playerAimHistory = [];
+    this.rallyHits = 0;
+    this.longRallyAnnounced = false;
     this.extraBalls = [];
     this.paddleLeft.y = H / 2 - PADDLE_H / 2;
     this.paddleRight.y = H / 2 - PADDLE_H / 2;
@@ -274,18 +292,85 @@ export class PongEngine {
     const dir = Math.random() > 0.5 ? 1 : -1;
     this.ball = {
       x: W / 2, y: H / 2,
-      vx: Math.cos(angle) * 5.5 * dir,
-      vy: Math.sin(angle) * 5.5,
-      speed: 5.5, trail: [], lastHitBy: null, frozen: true,
+      vx: Math.cos(angle) * 4.55 * dir,
+      vy: Math.sin(angle) * 4.55,
+      speed: 4.55, spin: 0, trail: [], lastHitBy: null, frozen: true,
     };
     this.extraBalls = [];
   }
 
-  private launchBall() { this.ball.frozen = false; }
+  private getShotType(side: 'left' | 'right'): ShotType {
+    const keys = side === 'right'
+      ? { slice: this.keys['z'] || this.keys['Z'], stopspin: this.keys['x'] || this.keys['X'], power: this.keys['c'] || this.keys['C'] }
+      : { slice: this.keys['a'] || this.keys['A'], stopspin: this.keys['d'] || this.keys['D'], power: this.keys['f'] || this.keys['F'] };
+    const charge = side === 'left' ? this.chargeLeft : this.chargeRight;
+    if (keys.power && charge >= 100) return 'power';
+    if (keys.stopspin) return 'stopspin';
+    if (keys.slice) return 'slice';
+    return 'normal';
+  }
+
+  private spendPower(side: 'left' | 'right', shot: ShotType) {
+    if (shot !== 'power') return;
+    if (side === 'left') this.chargeLeft = 0;
+    else this.chargeRight = 0;
+  }
+
+  private launchServe() {
+    const side = this.serveSide;
+    const paddle = side === 'left' ? this.paddleLeft : this.paddleRight;
+    const paddleCenter = paddle.y + this.getPaddleH(side) / 2;
+    const shot = this.getShotType(side);
+    const serve = calculateServe(side, (paddleCenter - H / 2) / (H / 2), shot);
+    this.spendPower(side, shot);
+    this.ball = {
+      x: side === 'left' ? paddle.x + PADDLE_W + BALL_R : paddle.x - BALL_R,
+      y: paddleCenter,
+      ...serve,
+      trail: [],
+      lastHitBy: side,
+      frozen: false,
+    };
+    this.rallyHits = 0;
+    this.longRallyAnnounced = false;
+    this.state = GameState.PLAYING;
+    this.onStateChange?.(this.state);
+    if (shot !== 'normal') this.announce('shot', side === 'right' ? 'PLAYER' : this.twoPlayer ? 'P1' : 'CPU', shot);
+  }
+
+  private mostCommonAim() {
+    if (this.playerAimHistory.length < 3) return null;
+    const counts = [0, 0, 0];
+    for (const y of this.playerAimHistory) counts[y < H / 3 ? 0 : y > H * 2 / 3 ? 2 : 1]++;
+    const zone = counts.indexOf(Math.max(...counts));
+    if (counts[zone] < 3) return null;
+    return { zone, count: counts[zone], y: zone === 0 ? H / 6 : zone === 1 ? H / 2 : H * 5 / 6 };
+  }
+
+  private playerReadLabel() {
+    const read = this.mostCommonAim();
+    return read ? ['high', 'middle', 'low'][read.zone] : '';
+  }
+
+  private recordPlayerAim() {
+    if (Math.abs(this.ball.vx) < 0.01) return;
+    const target = predictInterceptY(this.ball.y, this.ball.vy, this.ball.vx, this.paddleLeft.x - this.ball.x, 30, H - 30);
+    this.playerAimHistory.push(target);
+    if (this.playerAimHistory.length > 12) this.playerAimHistory.shift();
+  }
+
+  private announce(kind: AnnouncerEvent['kind'], shooter: AnnouncerEvent['shooter'], shot: ShotType = 'normal') {
+    this.onAnnouncer?.({
+      kind, shooter, shot,
+      scoreLeft: this.scoreLeft,
+      scoreRight: this.scoreRight,
+      rallyHits: this.rallyHits,
+      playerRead: this.playerReadLabel(),
+    });
+  }
 
   private getPaddleH(side: 'left' | 'right'): number {
     let h = PADDLE_H;
-    const paddle = side === 'left' ? this.paddleLeft : this.paddleRight;
     for (const p of this.activePowerUps) {
       if (p.type === 'big' && p.owner === side) h = PADDLE_H * 1.5;
       if (p.type === 'small' && p.target === side) h = PADDLE_H * 0.6;
@@ -294,7 +379,7 @@ export class PongEngine {
   }
 
   // ---- Physics ----
-  private handlePaddleInput(dt: number) {
+  private handlePaddleInput() {
     const speed = 420;
     if (this.keys['ArrowUp']) this.paddleRight.vy = -speed;
     else if (this.keys['ArrowDown']) this.paddleRight.vy = speed;
@@ -314,16 +399,21 @@ export class PongEngine {
     let targetY = this.ball.y;
 
     if (this.aiDifficulty >= 1 && this.ball.vx < 0) {
-      const timeToReach = (this.ball.x - this.paddleLeft.x - PADDLE_W) / (-this.ball.vx + 0.001);
-      targetY = this.ball.y + this.ball.vy * timeToReach;
-      while (targetY < 0 || targetY > H) {
-        if (targetY < 0) targetY = -targetY;
-        if (targetY > H) targetY = 2 * H - targetY;
+      targetY = predictInterceptY(
+        this.ball.y, this.ball.vy, this.ball.vx,
+        this.ball.x - this.paddleLeft.x - PADDLE_W,
+        30, H - 30,
+      );
+      const read = this.mostCommonAim();
+      if (read) {
+        const readStrength = [0.08, 0.15, 0.24][this.aiDifficulty];
+        const confidence = Math.min(readStrength, (read.count - 2) * 0.04);
+        targetY = targetY * (1 - confidence) + read.y * confidence;
       }
     }
 
-    const imprecision = this.aiDifficulty === 0 ? 40 : this.aiDifficulty === 1 ? 20 : 8;
-    targetY += Math.sin(Date.now() / 500) * imprecision;
+    const baseImprecision = this.aiDifficulty === 0 ? 52 : this.aiDifficulty === 1 ? 34 : 20;
+    targetY += Math.sin(Date.now() / 500) * baseImprecision;
     const diff = targetY - paddleCenter;
     const maxMove = aiSpd * 60 * dt;
 
@@ -354,14 +444,21 @@ export class PongEngine {
     }
     if (!hit) return null;
 
-    const relY = (b.y - paddle.y) / ph;
-    const angle = (relY - 0.5) * Math.PI * 0.6;
-    const spd = Math.min(Math.sqrt(b.vx*b.vx + b.vy*b.vy) * 1.05, 14);
-    const dir = side === 'left' ? 1 : -1;
-    return {
-      vx: Math.cos(angle) * spd * dir,
-      vy: Math.sin(angle) * spd + paddle.vy * 0.15,
-    };
+    const hitOffset = ((b.y - (paddle.y + ph / 2)) / (ph / 2));
+    let shot = this.getShotType(side);
+    if (side === 'left' && !this.twoPlayer && this.aiDifficulty === 2 && this.chargeLeft >= 100 && Math.abs(hitOffset) < 0.36) {
+      shot = 'power';
+    }
+    const result = calculateShot({
+      side,
+      shot,
+      hitOffset,
+      paddleVelocity: paddle.vy,
+      incomingVy: b.vy,
+      incomingSpeed: Math.hypot(b.vx, b.vy),
+    });
+    this.spendPower(side, shot);
+    return { ...result, shot };
   }
 
   private updateBall(b: Ball, dt: number, isExtra: boolean): boolean {
@@ -369,10 +466,14 @@ export class PongEngine {
 
     let speedMult = 1;
     for (const p of this.activePowerUps) {
-      if (p.type === 'fast') speedMult = 1.5;
-      if (p.type === 'slow') speedMult = 0.6;
+      if (p.type === 'fast') speedMult = 1.25;
+      if (p.type === 'slow') speedMult = 0.72;
     }
 
+    const curved = applySpin(b.vx, b.vy, b.spin, dt);
+    b.vx = curved.vx;
+    b.vy = curved.vy;
+    b.spin = curved.spin;
     b.x += b.vx * 60 * dt * speedMult;
     b.y += b.vy * 60 * dt * speedMult;
 
@@ -380,12 +481,14 @@ export class PongEngine {
     if (b.y - BALL_R < 20) {
       b.y = 20 + BALL_R;
       b.vy = Math.abs(b.vy);
+      b.spin *= -0.78;
       this.audio.wallHit();
       this.emitParticles(b.x, b.y, '#ffffff', 5, 80, 0.3, 2);
     }
     if (b.y + BALL_R > H - 20) {
       b.y = H - 20 - BALL_R;
       b.vy = -Math.abs(b.vy);
+      b.spin *= -0.78;
       this.audio.wallHit();
       this.emitParticles(b.x, b.y, '#ffffff', 5, 80, 0.3, 2);
     }
@@ -393,21 +496,36 @@ export class PongEngine {
     // Paddle collisions
     const leftHit = this.ballPaddleCollision(b, this.paddleLeft, 'left');
     if (leftHit) {
-      b.vx = leftHit.vx; b.vy = leftHit.vy;
+      b.vx = leftHit.vx; b.vy = leftHit.vy; b.spin = leftHit.spin; b.speed = leftHit.speed;
       b.x = this.paddleLeft.x + PADDLE_W + BALL_R;
       b.lastHitBy = 'left';
+      this.rallyHits++;
+      this.chargeLeft = Math.min(100, this.chargeLeft + (leftHit.speed > 7.4 ? 0 : 18));
+      if (this.rallyHits >= 8 && !this.longRallyAnnounced) {
+        this.longRallyAnnounced = true;
+        this.announce('long-rally', this.twoPlayer ? 'P1' : 'CPU');
+      }
       this.audio.paddleHit();
       this.emitParticles(b.x, b.y, this.paddleLeft.glowColor, 12, 150, 0.4, 3);
       this.triggerShake(3);
+      if (leftHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P1' : 'CPU', leftHit.shot);
     }
     const rightHit = this.ballPaddleCollision(b, this.paddleRight, 'right');
     if (rightHit) {
-      b.vx = rightHit.vx; b.vy = rightHit.vy;
+      b.vx = rightHit.vx; b.vy = rightHit.vy; b.spin = rightHit.spin; b.speed = rightHit.speed;
       b.x = this.paddleRight.x - BALL_R;
       b.lastHitBy = 'right';
+      this.rallyHits++;
+      this.chargeRight = Math.min(100, this.chargeRight + 18);
+      if (!this.twoPlayer) this.recordPlayerAim();
+      if (this.rallyHits >= 8 && !this.longRallyAnnounced) {
+        this.longRallyAnnounced = true;
+        this.announce('long-rally', this.twoPlayer ? 'P2' : 'PLAYER');
+      }
       this.audio.paddleHit();
       this.emitParticles(b.x, b.y, this.paddleRight.glowColor, 12, 150, 0.4, 3);
       this.triggerShake(3);
+      if (rightHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P2' : 'PLAYER', rightHit.shot);
     }
 
     // Scoring
@@ -442,6 +560,10 @@ export class PongEngine {
   }
 
   private onGoal() {
+    const scorer = this.goalScorer === 'right'
+      ? (this.twoPlayer ? 'P2' : 'PLAYER')
+      : (this.twoPlayer ? 'P1' : 'CPU');
+    this.announce('point', scorer);
     if (this.scoreLeft >= WIN_SCORE || this.scoreRight >= WIN_SCORE) {
       const winner = this.scoreLeft >= WIN_SCORE ? 'left' : 'right';
       const playerWon = this.twoPlayer || winner === 'right';
@@ -469,20 +591,10 @@ export class PongEngine {
       this.goalTimer = 2;
       this.state = GameState.GOAL;
       this.onStateChange?.(this.state);
-      setTimeout(() => {
-        this.state = GameState.GAME_OVER;
-        this.onStateChange?.(this.state);
-      }, 2000);
     } else {
-      this.goalTimer = 1.2;
+      this.goalTimer = 1.05;
       this.state = GameState.GOAL;
       this.onStateChange?.(this.state);
-      setTimeout(() => {
-        this.resetBall();
-        this.state = GameState.PLAYING;
-        this.onStateChange?.(this.state);
-        setTimeout(() => this.launchBall(), 500);
-      }, 1200);
     }
   }
 
@@ -525,7 +637,7 @@ export class PongEngine {
             x: this.ball.x, y: this.ball.y,
             vx: Math.cos(angle) * spd * dir * (0.8 + Math.random()*0.4),
             vy: Math.sin(angle) * spd,
-            speed: spd, trail: [], lastHitBy: this.ball.lastHitBy, frozen: false,
+            speed: spd, spin: this.ball.spin, trail: [], lastHitBy: this.ball.lastHitBy, frozen: false,
           });
         }
       } else {
@@ -846,6 +958,18 @@ export class PongEngine {
     ctx.font = '8px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
     ctx.fillText(`FIRST TO ${WIN_SCORE}`, W/2, H - 8);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.font = '7px "Press Start 2P", monospace';
+    ctx.fillText('POWER', W - 150, H - 45);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(W - 142, H - 52, 112, 8);
+    ctx.fillStyle = this.chargeRight >= 100 ? '#d7fa59' : '#60a5fa';
+    ctx.shadowBlur = this.chargeRight >= 100 ? 10 : 0;
+    ctx.shadowColor = '#d7fa59';
+    ctx.fillRect(W - 142, H - 52, 112 * (this.chargeRight / 100), 8);
+    ctx.shadowBlur = 0;
   }
 
   private drawGoldBall() {
@@ -1134,9 +1258,36 @@ export class PongEngine {
     ctx.textBaseline = 'alphabetic';
   }
 
+  private drawServeScreen() {
+    this.drawBackground();
+    this.drawCourt();
+    this.drawPaddle(this.paddleLeft, this.getPaddleH('left'));
+    this.drawPaddle(this.paddleRight, this.getPaddleH('right'));
+    this.drawHUD();
+    const ctx = this.ctx;
+    const server = this.serveSide === 'right'
+      ? (this.twoPlayer ? 'P2' : 'PLAYER')
+      : (this.twoPlayer ? 'P1' : 'CPU');
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#d7fa59';
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = '#d7fa59';
+    ctx.font = '30px Orbitron, sans-serif';
+    ctx.fillText(`${server} SERVE`, W / 2, H / 2 - 28);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '10px "Press Start 2P", monospace';
+    ctx.fillText(server === 'CPU' ? 'CPU IS LINING IT UP…' : 'PRESS SPACE TO SERVE', W / 2, H / 2 + 18);
+    if (server !== 'CPU') {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.font = '8px "Press Start 2P", monospace';
+      ctx.fillText('MOVE YOUR PADDLE TO AIM', W / 2, H / 2 + 44);
+    }
+  }
+
   private drawGoalFlash() {
     const ctx = this.ctx;
-    const maxTimer = (this.scoreLeft >= WIN_SCORE || this.scoreRight >= WIN_SCORE) ? 2 : 1.2;
+    const maxTimer = (this.scoreLeft >= WIN_SCORE || this.scoreRight >= WIN_SCORE) ? 2 : 1.05;
     const progress = 1 - (this.goalTimer / maxTimer);
     ctx.globalAlpha = Math.max(0, 0.3 * (1 - progress));
     ctx.fillStyle = this.goalScorer === 'left' ? '#ef4444' : '#3b82f6';
@@ -1288,16 +1439,25 @@ export class PongEngine {
           else this.audio.countdownGo();
         }
         if (this.countdownTimer <= 0) {
-          this.state = GameState.PLAYING;
+          this.serveSide = (this.scoreLeft + this.scoreRight) % 2 === 0 ? 'right' : 'left';
+          this.serveWait = 0;
+          this.state = GameState.SERVE;
           this.onStateChange?.(this.state);
-          this.launchBall();
         }
         this.drawCountdownScreen();
         break;
       }
 
+      case GameState.SERVE:
+        this.handlePaddleInput();
+        this.updatePaddles(dt);
+        this.serveWait += dt;
+        if (!this.twoPlayer && this.serveSide === 'left' && this.serveWait >= 0.85) this.launchServe();
+        this.drawServeScreen();
+        break;
+
       case GameState.PLAYING:
-        this.handlePaddleInput(dt);
+        this.handlePaddleInput();
         this.updateAI(dt);
         this.updatePaddles(dt);
         this.updateBall(this.ball, dt, false);
@@ -1354,6 +1514,17 @@ export class PongEngine {
         this.drawHUD();
         this.drawGoalFlash();
         this.drawParticles();
+        if (this.goalTimer <= 0) {
+          if (this.scoreLeft >= WIN_SCORE || this.scoreRight >= WIN_SCORE) {
+            this.state = GameState.GAME_OVER;
+          } else {
+            this.resetBall();
+            this.serveSide = (this.scoreLeft + this.scoreRight) % 2 === 0 ? 'right' : 'left';
+            this.serveWait = 0;
+            this.state = GameState.SERVE;
+          }
+          this.onStateChange?.(this.state);
+        }
         break;
 
       case GameState.GAME_OVER:

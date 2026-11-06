@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint src tests/*.test.mjs",
+    "test": "tsc --target ES2020 --module commonjs --outDir .test-build src/game/physics.ts src/game/announcer.ts && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "next": "16.1.6",
