@@ -87,18 +87,18 @@ a { color: inherit; text-decoration: none; }
 .game-wrapper.is-live .game-canvas { touch-action: none; }
 .touch-pad { padding: 10px; display: grid; gap: 10px; background: #0b0e12; border-top: 1px solid var(--line); user-select: none; -webkit-user-select: none; }
 .touch-utility { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.touch-tip { flex: 1; text-align: center; color: #7d8289; font: 8px/1.4 "IBM Plex Mono", monospace; letter-spacing: .08em; }
+.touch-tip { flex: 1; text-align: left; color: #7d8289; font: 8px/1.4 "IBM Plex Mono", monospace; letter-spacing: .08em; }
 .touch-sides { display: flex; gap: 12px; }
-.touch-cluster { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; position: relative; }
+.touch-cluster { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; position: relative; }
 .touch-player { grid-column: 1 / -1; color: var(--acid); font: 9px "IBM Plex Mono", monospace; letter-spacing: .12em; }
 .touch-btn { min-height: 44px; padding: 0 12px; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; background: rgba(255,255,255,.05); color: #e8e8e4; font: 9px "IBM Plex Mono", monospace; letter-spacing: .06em; touch-action: none; -webkit-touch-callout: none; cursor: pointer; }
 .touch-btn:active { background: rgba(215,250,89,.2); border-color: var(--acid); }
 .touch-shot { min-height: 56px; padding: 0 2px; }
 .touch-topspin { border-color: rgba(255,176,32,.6); color: #ffc65c; }
 .touch-slice { border-color: rgba(56,225,255,.55); color: #7feaff; }
-.touch-stopspin { border-color: rgba(177,140,255,.6); color: #cbb2ff; }
-.touch-power { border-color: rgba(255,255,255,.55); color: #fff; }
-.touch-serve.is-ready { border-color: var(--acid); color: var(--acid); box-shadow: 0 0 12px rgba(215,250,89,.3); }
+.touch-flat { border-color: rgba(255,255,255,.55); color: #fff; }
+.touch-lob { border-color: rgba(227,204,255,.6); color: #e3ccff; }
+.touch-drop { border-color: rgba(255,143,176,.6); color: #ff9fbc; }
 @media (pointer: coarse) { .control-strip, .input-notes { display: none; } }
 
 @media (min-width: 1200px) { .intro { padding-top: 59px; } }

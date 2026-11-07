@@ -35,15 +35,18 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
-## Game controls
+## How it plays
 
-- Player vs CPU: Arrow keys move, `V` adds topspin, `Z` slices, `X` uses stop-spin, hold `C` before contact and release in the green timing zone for a perfect power shot, and `Space` serves.
-- Local two-player: Player 1 uses `W`/`S` and `E`/`A`/`D`/`F`; Player 2 uses the arrow keys and `V`/`Z`/`X`/`C`. Hold `F` or `C` to charge, then release near contact for better timing.
-- Timing: tap `V`/`Z`/`X` (or release `C`) while the meter is in the green. Spin strokes hit by timing get extra pace and spin; rushed ones spray.
-- Spin on the first wall bounce: topspin kicks up in pace, slice skids flatter, stop-spin dies.
-- Timing practice: pick it from the mode menu. A coach feeds balls, a lime ring marks the green window, and your perfect-shot streak is saved in the browser.
-- Controller: stick or D-pad moves, `A` serves and confirms, `Y` topspin, `B` slice, `X` stop-spin, any trigger or bumper charges power, `Start` pauses. In two-player, the first controller is P1 and the second is P2.
-- Touch: drag on the court to move and use the on-screen shot buttons. In two-player, each player drags their own half.
+A tennis game with a 3D ball, a broadcast camera, and real scoring (15-30-40, deuce, faults, first to 3 games).
+
+- **Move and aim:** arrow keys run around the court. The direction you hold at the swing aims the shot.
+- **Shots:** `V` topspin, `C` flat, `Z` slice, `B` lob, `X` drop shot. Each has its own pace, arc, and bounce.
+- **Timing:** hold a shot to wind up, then release as the marker hits the green. Early sails long, late finds the net, and way off misses the ball.
+- **Serve:** hold `Space` or a shot key to toss, and release in the green at the top of the toss.
+- **Timing practice:** a coach feeds balls with no score, and your perfect-shot streak is saved in the browser.
+- **Two players:** P1 (far end) uses `WASD` with `E` `R` `Q` `G` `F`. P2 (near end) uses the arrows with `V` `C` `Z` `B` `X`.
+- **Controller:** stick moves and aims, `A` topspin, `X` flat, `B` slice, `Y` lob, `RB`/`RT` drop, `Start` pauses. In two-player, the first controller is P1.
+- **Touch:** drag on the court to move, and hold and release the on-screen shot buttons.
 - Toggle spoken play-by-play with the Voice button.
 
 ## Optional AI announcer

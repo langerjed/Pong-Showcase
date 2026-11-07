@@ -7,14 +7,16 @@ import { fallbackCommentary } from '@/game/announcer';
 import { GameState } from '@/game/types';
 import type { AnnouncerEvent } from '@/game/types';
 import { SIDE_KEYS } from '@/game/input';
-import type { InputDevice, Side } from '@/game/input';
+import type { InputDevice } from '@/game/input';
+import type { End } from '@/game/sim';
 
-const LIVE_STATES = [GameState.COUNTDOWN, GameState.SERVE, GameState.PLAYING, GameState.GOAL, GameState.PAUSED];
+const LIVE_STATES = [GameState.SERVE, GameState.PLAYING, GameState.GOAL, GameState.PAUSED];
 const TOUCH_SHOTS = [
   { action: 'topspin', label: 'TOPSPIN' },
+  { action: 'flat', label: 'FLAT' },
   { action: 'slice', label: 'SLICE' },
-  { action: 'stopspin', label: 'STOP' },
-  { action: 'power', label: 'HOLD POWER' },
+  { action: 'lob', label: 'LOB' },
+  { action: 'drop', label: 'DROP' },
 ] as const;
 
 export default function PongGame() {
@@ -58,6 +60,11 @@ export default function PongGame() {
     engine.onStateChange = state => {
       setGameState(state);
       setTwoPlayer(engine.twoPlayer);
+      // Starting play brings the whole court on screen, since arrow keys no longer scroll the page.
+      if (state === GameState.SERVE || state === GameState.PLAYING) {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.top < 0 || rect.bottom > window.innerHeight) canvas.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
     };
     engine.onAnnouncer = (event: AnnouncerEvent) => {
       const localLine = fallbackCommentary(event);
@@ -112,7 +119,7 @@ export default function PongGame() {
     onContextMenu: (event: MouseEvent) => event.preventDefault(),
   });
 
-  const touchSides: Side[] = twoPlayer ? ['left', 'right'] : ['right'];
+  const touchEnds: End[] = twoPlayer ? ['far', 'near'] : ['near'];
 
   return (
     <>
@@ -148,16 +155,15 @@ export default function PongGame() {
     {touchSeen && (
       <div className="touch-pad" aria-label="Touch controls">
         <div className="touch-utility">
-          <button type="button" className={`touch-btn touch-serve${gameState === GameState.SERVE ? ' is-ready' : ''}`} {...holdButton(' ')}>SERVE</button>
-          <span className="touch-tip">{twoPlayer ? 'DRAG YOUR HALF OF THE COURT TO MOVE' : 'DRAG ON THE COURT TO MOVE'}</span>
+          <span className="touch-tip">{twoPlayer ? 'DRAG YOUR HALF OF THE COURT TO MOVE. HOLD A SHOT, RELEASE IN THE GREEN.' : 'DRAG THE COURT TO MOVE. HOLD A SHOT, RELEASE IN THE GREEN.'}</span>
           <button type="button" className="touch-btn" {...holdButton('Escape')}>PAUSE</button>
         </div>
         <div className="touch-sides">
-          {touchSides.map(side => (
-            <div className="touch-cluster" key={side}>
-              {twoPlayer && <span className="touch-player">{side === 'left' ? 'P1' : 'P2'}</span>}
+          {touchEnds.map(end => (
+            <div className="touch-cluster" key={end}>
+              {twoPlayer && <span className="touch-player">{end === 'far' ? 'P1' : 'P2'}</span>}
               {TOUCH_SHOTS.map(shot => (
-                <button type="button" key={shot.action} className={`touch-btn touch-shot touch-${shot.action}`} {...holdButton(SIDE_KEYS[side][shot.action])}>
+                <button type="button" key={shot.action} className={`touch-btn touch-shot touch-${shot.action}`} {...holdButton(SIDE_KEYS[end][shot.action])}>
                   {shot.label}
                 </button>
               ))}

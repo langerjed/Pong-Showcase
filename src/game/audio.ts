@@ -17,11 +17,11 @@ interface ToneOptions {
 }
 
 const SHOT_TONES: Record<ShotType, ToneOptions> = {
-  normal: { freq: 480, duration: 0.05, type: 'square' },
-  topspin: { freq: 460, slideTo: 760, duration: 0.09, type: 'square' },
-  slice: { freq: 620, slideTo: 300, duration: 0.11, type: 'triangle', volume: 0.2 },
-  stopspin: { freq: 340, slideTo: 220, duration: 0.08, type: 'sine', volume: 0.22 },
-  power: { freq: 240, slideTo: 90, duration: 0.14, type: 'sawtooth', volume: 0.2 },
+  topspin: { freq: 300, slideTo: 170, duration: 0.075, type: 'triangle', volume: 0.3 },
+  flat: { freq: 210, slideTo: 95, duration: 0.09, type: 'triangle', volume: 0.36 },
+  slice: { freq: 430, slideTo: 240, duration: 0.07, type: 'sine', volume: 0.26 },
+  lob: { freq: 260, slideTo: 200, duration: 0.09, type: 'sine', volume: 0.24 },
+  drop: { freq: 520, slideTo: 340, duration: 0.05, type: 'sine', volume: 0.16 },
 };
 
 export class AudioEngine {
@@ -61,30 +61,57 @@ export class AudioEngine {
     freqs.forEach((freq, i) => this.tone({ freq, duration, delay: i * step }));
   }
 
-  /** Each stroke has its own sound, placed in stereo where the ball was hit. */
-  shotHit(shot: ShotType, pan: number, speedRatio: number, perfect: boolean) {
-    const base = SHOT_TONES[shot];
-    const pitch = 0.9 + Math.max(0, Math.min(1, speedRatio)) * 0.25;
-    this.tone({
-      ...base,
-      pan,
-      freq: (base.freq ?? 440) * pitch,
-      slideTo: base.slideTo ? base.slideTo * pitch : undefined,
-    });
-    if (perfect) {
-      [1047, 1568].forEach((freq, i) => this.tone({ freq, duration: 0.14, type: 'triangle', volume: 0.16, pan, delay: i * 0.05 }));
+  private noise(duration: number, volume: number, filterFreq: number, pan = 0, attack = 0.004) {
+    if (!this.ctx) return;
+    const length = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = filterFreq;
+    filter.Q.value = 0.7;
+    const gain = this.ctx.createGain();
+    const now = this.ctx.currentTime;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(volume, now + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0008, now + duration);
+    source.connect(filter);
+    filter.connect(gain);
+    if (pan !== 0 && typeof this.ctx.createStereoPanner === 'function') {
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = Math.max(-1, Math.min(1, pan));
+      gain.connect(panner);
+      panner.connect(this.ctx.destination);
+    } else {
+      gain.connect(this.ctx.destination);
     }
+    source.start();
   }
 
-  wallHit(pan = 0) { this.tone({ freq: 300, duration: 0.04, pan }); }
-  score(pan = 0)   { this.tone({ freq: 220, duration: 0.25, pan }); }
-  miss(pan = 0)    { this.tone({ freq: 200, slideTo: 110, duration: 0.2, type: 'triangle', volume: 0.18, pan }); }
+  /** A racket thwack: a felt-and-string noise burst over a short body tone that differs per stroke. */
+  shotHit(shot: ShotType, pan: number, power: number, perfect: boolean) {
+    const base = SHOT_TONES[shot];
+    this.tone({ ...base, pan, volume: (base.volume ?? 0.2) * (0.7 + power * 0.4) });
+    this.noise(0.05, shot === 'drop' ? 0.12 : 0.3, perfect ? 3200 : 2200, pan);
+    if (perfect) this.tone({ freq: 150, slideTo: 70, duration: 0.11, type: 'sine', volume: 0.3, pan });
+  }
+
+  bounce(pan: number, volume = 1) {
+    this.noise(0.035, 0.12 * volume, 1500, pan);
+    this.tone({ freq: 190, slideTo: 130, duration: 0.03, type: 'sine', volume: 0.09 * volume, pan });
+  }
+
+  netHit(pan: number) { this.noise(0.12, 0.16, 500, pan); }
+  whoosh(pan: number) { this.noise(0.16, 0.07, 900, pan, 0.06); }
+  crowd(strength: number) { this.noise(1.1 + strength * 0.9, 0.05 + strength * 0.09, 1300, 0, 0.12); }
+
   menuSelect()     { this.tone({ freq: 600, duration: 0.03 }); }
   countdown()      { this.tone({ freq: 800, duration: 0.08 }); }
   countdownGo()    { this.tone({ freq: 1200, duration: 0.15 }); }
 
-  goldPickup() { this.sequence([660, 880, 1100, 1320], 0.06, 0.08); }
-  powerUp()    { this.sequence([500, 700, 900], 0.05, 0.06); }
   victory()    { this.sequence([523, 659, 784, 1047], 0.12, 0.12); }
   gameOver()   { this.sequence([400, 350, 300, 200], 0.15, 0.15); }
 }

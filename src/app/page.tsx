@@ -35,7 +35,7 @@ export default function Home() {
         <section className="intro" id="top" aria-labelledby="hero-title">
           <div className="eyebrow"><span>01</span><span className="eyebrow-line" /> THE GAME THAT STARTED IT ALL</div>
           <h1 id="hero-title">Simple game.<br /><span>Endless rally.</span></h1>
-          <p className="intro-copy">A fresh take on the original arcade classic. Pick your side, find your rhythm, and send it back.</p>
+          <p className="intro-copy">The original rally, rebuilt as real tennis. Run it down, time your swing, and paint the lines.</p>
         </section>
 
         <section className="arena-section" aria-label="Pong game">
@@ -49,23 +49,23 @@ export default function Home() {
             <div className="frame-bottomline"><span><i /> SIGNAL LOCKED</span><span className="frame-center-label">PONG SHOWCASE</span><span>VOL. 01</span></div>
           </div>
           <div className="control-strip">
-            <div className="control-item"><span className="keycap">↑</span><span className="keycap">↓</span><span className="control-label"><strong>MOVE</strong><small>ARROW KEYS</small></span></div>
+            <div className="control-item"><span className="keycap">←</span><span className="keycap">↑</span><span className="keycap">↓</span><span className="keycap">→</span><span className="control-label"><strong>RUN + AIM</strong><small>HOLD A DIRECTION AS YOU SWING</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">Z</span><span className="control-label"><strong>SLICE</strong><small>SKIDS OFF THE WALL</small></span></div>
+            <div className="control-item"><span className="keycap">V</span><span className="control-label"><strong>TOPSPIN</strong><small>DIPS, KICKS UP</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">V</span><span className="control-label"><strong>TOPSPIN</strong><small>KICKS OFF THE WALL</small></span></div>
+            <div className="control-item"><span className="keycap">C</span><span className="control-label"><strong>FLAT</strong><small>FAST, LOW, RISKY</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">X</span><span className="control-label"><strong>STOP-SPIN</strong><small>DIES OFF THE WALL</small></span></div>
+            <div className="control-item"><span className="keycap">Z</span><span className="control-label"><strong>SLICE</strong><small>FLOATS, SKIDS LOW</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">C</span><span className="control-label"><strong>POWER</strong><small>HOLD, RELEASE IN GREEN</small></span></div>
+            <div className="control-item"><span className="keycap">B</span><span className="control-label"><strong>LOB</strong><small>OVER THEIR HEAD</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap wide">SPACE</span><span className="control-label"><strong>SERVE</strong><small>AIM WITH PADDLE</small></span></div>
-            <div className="control-spacer" />
-            <div className="control-hint"><span>P1</span> W/S + A/E/D/F <b>·</b> P2 ARROWS + V/Z/X/C <b>·</b> ENTER SELECT <b>·</b> ESC PAUSE</div>
+            <div className="control-item"><span className="keycap">X</span><span className="control-label"><strong>DROP</strong><small>DIES AT THE NET</small></span></div>
           </div>
           <div className="input-notes">
-            <p><strong>TIMING</strong> Tap a spin shot, or release power, while the meter is in the green. Every stroke gets graded.</p>
-            <p><strong>CONTROLLER</strong> Stick or D-pad moves · A serves · Y topspin · B slice · X stop-spin · any trigger or bumper charges power · Start pauses. In two-player, the first controller is P1.</p>
+            <p><strong>TIMING</strong> Hold a shot to wind up (longer means more pace), and release as the meter marker hits the green. Early sails long, late finds the net, and way off misses the ball.</p>
+            <p><strong>POSITION</strong> Run to the ball. Stretching for it costs pace and control. Space or any shot key tosses on your serve.</p>
+            <p><strong>TWO PLAYERS</strong> P1 (far end) WASD + Q E R F G. P2 (near end) arrows + Z V C X B.</p>
+            <p><strong>CONTROLLER</strong> Stick moves and aims · A topspin · X flat · B slice · Y lob · RB/RT drop · Start pauses. In two-player, the first controller is P1.</p>
           </div>
         </section>
 

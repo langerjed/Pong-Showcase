@@ -5,17 +5,30 @@
 // ============================================================
 
 import { GameState } from './types';
+import type { ShotType } from './types';
+import type { End } from './sim';
 
-export type Side = 'left' | 'right';
 export type InputDevice = 'keyboard' | 'gamepad' | 'touch';
 
 export const SIDE_KEYS = {
-  right: { up: 'ArrowUp', down: 'ArrowDown', topspin: 'v', slice: 'z', stopspin: 'x', power: 'c' },
-  left: { up: 'w', down: 's', topspin: 'e', slice: 'a', stopspin: 'd', power: 'f' },
+  near: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', topspin: 'v', flat: 'c', slice: 'z', drop: 'x', lob: 'b' },
+  far: { up: 'w', down: 's', left: 'a', right: 'd', topspin: 'e', flat: 'r', slice: 'q', drop: 'f', lob: 'g' },
 } as const;
 
+export const SHOT_TYPES: ShotType[] = ['topspin', 'flat', 'slice', 'lob', 'drop'];
+
+/** Which player and shot a key means, if any. */
+export function shotForKey(key: string): { end: End; shot: ShotType } | null {
+  for (const end of ['near', 'far'] as const) {
+    for (const shot of SHOT_TYPES) {
+      if (SIDE_KEYS[end][shot] === key) return { end, shot };
+    }
+  }
+  return null;
+}
+
 // Standard Gamepad layout button indices.
-const BTN = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, back: 8, start: 9, up: 12, down: 13 };
+const BTN = { a: 0, b: 1, x: 2, y: 3, rb: 5, rt: 7, start: 9, up: 12, down: 13, left: 14, right: 15 };
 const MENU_STICK_THRESHOLD = 0.5;
 
 export interface PadLike {
@@ -26,12 +39,11 @@ export interface PadLike {
 export interface PadContext {
   state: GameState;
   twoPlayer: boolean;
-  serveSide: Side;
 }
 
 export interface PadFrame {
   keys: Set<string>;
-  axis: Record<Side, number>;
+  move: Record<End, { x: number; y: number }>;
 }
 
 export function applyDeadzone(value: number, deadzone = 0.18) {
@@ -40,8 +52,8 @@ export function applyDeadzone(value: number, deadzone = 0.18) {
   return Math.sign(value) * Math.min(1, (magnitude - deadzone) / (1 - deadzone));
 }
 
-export function padSide(padIndex: number, twoPlayer: boolean): Side {
-  return twoPlayer && padIndex === 0 ? 'left' : 'right';
+export function padEnd(padIndex: number, twoPlayer: boolean): End {
+  return twoPlayer && padIndex === 0 ? 'far' : 'near';
 }
 
 const isDown = (pad: PadLike, index: number) => {
@@ -51,42 +63,41 @@ const isDown = (pad: PadLike, index: number) => {
 
 export function mapGamepads(pads: readonly PadLike[], ctx: PadContext): PadFrame {
   const keys = new Set<string>();
-  const axis: Record<Side, number> = { left: 0, right: 0 };
-  const inRally = ctx.state === GameState.PLAYING || ctx.state === GameState.SERVE;
+  const move: PadFrame['move'] = { near: { x: 0, y: 0 }, far: { x: 0, y: 0 } };
+  const inPlay = ctx.state === GameState.PLAYING || ctx.state === GameState.SERVE || ctx.state === GameState.GOAL;
   const inMenu = ctx.state === GameState.MODE_SELECT || ctx.state === GameState.DIFFICULTY;
 
   pads.forEach((pad, index) => {
-    const side = padSide(index, ctx.twoPlayer);
-    const map = SIDE_KEYS[side];
-    const stick = applyDeadzone(pad.axes[1] ?? 0);
-    const dpad = isDown(pad, BTN.up) ? -1 : isDown(pad, BTN.down) ? 1 : 0;
-    const a = isDown(pad, BTN.a);
-    const b = isDown(pad, BTN.b);
+    const end = padEnd(index, ctx.twoPlayer);
+    const map = SIDE_KEYS[end];
+    const stickX = applyDeadzone(pad.axes[0] ?? 0);
+    const stickY = applyDeadzone(pad.axes[1] ?? 0);
+    const dpadX = isDown(pad, BTN.left) ? -1 : isDown(pad, BTN.right) ? 1 : 0;
+    const dpadY = isDown(pad, BTN.up) ? -1 : isDown(pad, BTN.down) ? 1 : 0;
     const start = isDown(pad, BTN.start);
 
-    if (inRally) {
-      const move = dpad || stick;
-      if (Math.abs(move) > Math.abs(axis[side])) axis[side] = move;
-      if (isDown(pad, BTN.y)) keys.add(map.topspin);
-      if (b) keys.add(map.slice);
-      if (isDown(pad, BTN.x)) keys.add(map.stopspin);
-      if ([BTN.lb, BTN.rb, BTN.lt, BTN.rt].some(button => isDown(pad, button))) keys.add(map.power);
+    if (inPlay) {
+      const x = dpadX || stickX, y = dpadY || stickY;
+      if (Math.hypot(x, y) > Math.hypot(move[end].x, move[end].y)) move[end] = { x, y };
+      if (isDown(pad, BTN.a)) keys.add(map.topspin);
+      if (isDown(pad, BTN.x)) keys.add(map.flat);
+      if (isDown(pad, BTN.b)) keys.add(map.slice);
+      if (isDown(pad, BTN.y)) keys.add(map.lob);
+      if (isDown(pad, BTN.rb) || isDown(pad, BTN.rt)) keys.add(map.drop);
       if (start) keys.add('Escape');
-      const humanServe = ctx.twoPlayer || ctx.serveSide === 'right';
-      if (a && ctx.state === GameState.SERVE && humanServe && ctx.serveSide === side) keys.add(' ');
       return;
     }
 
     if (ctx.state === GameState.PAUSED) {
-      if (start || b) keys.add('Escape');
+      if (start || isDown(pad, BTN.b)) keys.add('Escape');
     } else if (start) {
       keys.add(' ');
     }
-    if (dpad < 0 || stick < -MENU_STICK_THRESHOLD) keys.add(map.up);
-    if (dpad > 0 || stick > MENU_STICK_THRESHOLD) keys.add(map.down);
-    if (a) keys.add(' ');
-    if (b && inMenu) keys.add('Escape');
+    if (dpadY < 0 || stickY < -MENU_STICK_THRESHOLD) keys.add(map.up);
+    if (dpadY > 0 || stickY > MENU_STICK_THRESHOLD) keys.add(map.down);
+    if (isDown(pad, BTN.a)) keys.add(' ');
+    if (isDown(pad, BTN.b) && inMenu) keys.add('Escape');
   });
 
-  return { keys, axis };
+  return { keys, move };
 }
