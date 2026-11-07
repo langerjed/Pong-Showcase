@@ -49,7 +49,7 @@ export default function Home() {
             <div className="frame-bottomline"><span><i /> SIGNAL LOCKED</span><span className="frame-center-label">PONG SHOWCASE</span><span>VOL. 01</span></div>
           </div>
           <div className="control-strip">
-            <div className="control-item"><span className="keycap">←</span><span className="keycap">↑</span><span className="keycap">↓</span><span className="keycap">→</span><span className="control-label"><strong>RUN + AIM</strong><small>HOLD A DIRECTION AS YOU SWING</small></span></div>
+            <div className="control-item"><span className="keycap">←</span><span className="keycap">↑</span><span className="keycap">↓</span><span className="keycap">→</span><span className="control-label"><strong>RUN + AIM</strong><small>OR AIM WITH THE MOUSE</small></span></div>
             <div className="control-divider" />
             <div className="control-item"><span className="keycap">V</span><span className="control-label"><strong>TOPSPIN</strong><small>DIPS, KICKS UP</small></span></div>
             <div className="control-divider" />
@@ -64,6 +64,8 @@ export default function Home() {
           <div className="input-notes">
             <p><strong>TIMING</strong> Hold a shot to wind up (longer means more pace), and release as the meter marker hits the green. Early sails long, late finds the net, and way off misses the ball.</p>
             <p><strong>POSITION</strong> Run to the ball. Stretching for it costs pace and control. Space or any shot key tosses on your serve.</p>
+            <p><strong>MOUSE</strong> Run with W A S D or the arrows. Hold left-click for topspin or right-click for slice, drag to move the target, and let go to swing. Up is deeper, and side to side picks the line. Q E R F G also play your shots.</p>
+            <p><strong>SERVE</strong> The button you hold picks the serve: C flat is fastest, V kick jumps up high, and Z slice stays low and swings sideways. B also kicks, X also slices, and Space serves flat.</p>
             <p><strong>TWO PLAYERS</strong> P1 (far end) WASD + Q E R F G. P2 (near end) arrows + Z V C X B.</p>
             <p><strong>CONTROLLER</strong> Stick moves and aims · A topspin · X flat · B slice · Y lob · RB/RT drop · Start pauses. In two-player, the first controller is P1.</p>
           </div>

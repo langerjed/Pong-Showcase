@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const { correctForCurve, COURT, courtMargin, gradeTiming, isIn, LINES, MARK_RADIUS, netHeightAt, serviceMargin, SHOTS, solveLaunch, stepBall, TennisSim, TOSS_IDEAL, toMph, toRpm, WINDOW } = await import('../.test-build/sim.js');
+const { project, unproject } = await import('../.test-build/render.js');
+const { correctForCurve, serveTypeFor, shotTarget, COURT, courtMargin, gradeTiming, isIn, LINES, MARK_RADIUS, netHeightAt, serviceMargin, SHOTS, solveLaunch, stepBall, TennisSim, TOSS_IDEAL, toMph, toRpm, WINDOW } = await import('../.test-build/sim.js');
 const { applyDeadzone, mapGamepads, padEnd, shotForKey } = await import('../.test-build/input.js');
 const { fallbackCommentary } = await import('../.test-build/announcer.js');
 const { Commentator, pointSituation } = await import('../.test-build/commentary.js');
+const { bodyPose, samplePose, swingTimeline } = await import('../.test-build/strokes.js');
 
 const seeded = (seed = 7) => () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 
@@ -360,4 +362,186 @@ test('a real match produces commentary only on big moments', () => {
   assert.ok(sim.matchWinner);
   assert.ok(big >= 3, `big points ${big}`);
   assert.ok(total >= 3 && total < points, `${total} result lines over ${points} points`);
+});
+
+const STRIKE = [0.6, 0.45, 1];
+const heightAt = (shot, s, contact = STRIKE, backhand = false) => samplePose(shot, s, contact, backhand).head[2];
+
+test('the racket head is exactly on the ball at contact for every stroke, on both wings', () => {
+  for (const shot of ['topspin', 'flat', 'slice', 'lob', 'drop', 'serve']) {
+    for (const backhand of [false, true]) {
+      const { head } = samplePose(shot, 1, STRIKE, backhand);
+      assert.deepEqual(head.map(v => +v.toFixed(6)), STRIKE, `${shot} ${backhand}`);
+    }
+  }
+});
+
+test('topspin swings low to high: under the ball, up the back of it, and over the top', () => {
+  assert.ok(heightAt('topspin', 0.6) < STRIKE[2] - 0.3, 'head drops well below the ball');
+  assert.ok(heightAt('topspin', 0.92) < STRIKE[2], 'still rising into contact');
+  assert.ok(heightAt('topspin', 1.1) > STRIKE[2], 'keeps rising after contact');
+  assert.ok(heightAt('topspin', 1.3) > STRIKE[2] + 0.4, 'brushes well above the ball');
+  assert.ok(heightAt('topspin', 2) > 1.7, 'finishes up over the shoulder');
+  assert.ok(samplePose('topspin', 1, STRIKE).tilt < 0, 'face slightly closed');
+});
+
+test('flat swings level, straight through the ball with a square face', () => {
+  for (const s of [0.6, 0.8, 0.92, 1.1, 1.2, 1.3]) {
+    assert.ok(Math.abs(heightAt('flat', s) - STRIKE[2]) < 0.08, `level at ${s}: ${heightAt('flat', s)}`);
+  }
+  assert.equal(samplePose('flat', 1, STRIKE).tilt, 0);
+  assert.ok(samplePose('flat', 1.3, STRIKE).head[1] > STRIKE[1] + 0.6, 'drives through towards the target');
+});
+
+test('slice swings high to low: down and under the ball with an open face', () => {
+  assert.ok(heightAt('slice', 0) > STRIKE[2] + 0.6, 'starts high');
+  assert.ok(heightAt('slice', 0.92) > STRIKE[2], 'coming down into contact');
+  assert.ok(heightAt('slice', 1.1) < STRIKE[2], 'keeps going down after contact');
+  assert.ok(heightAt('slice', 2) < STRIKE[2] - 0.2, 'finishes low');
+  assert.ok(samplePose('slice', 2, STRIKE).head[1] > STRIKE[1] + 0.5, 'finishes out in front, no wrap');
+  assert.ok(samplePose('slice', 2, STRIKE).head[0] > 0, 'stays on the hitting side instead of wrapping across the body');
+  assert.ok(samplePose('slice', 1, STRIKE).tilt > 0.4, 'face open under the ball');
+});
+
+test('the racket moves in the opposite vertical direction through contact on topspin and slice', () => {
+  const rise = shot => heightAt(shot, 1.05) - heightAt(shot, 0.95);
+  assert.ok(rise('topspin') > 0.05, 'topspin rises');
+  assert.ok(rise('slice') < -0.03, 'slice falls');
+  assert.ok(Math.abs(rise('flat')) < Math.abs(rise('topspin')) / 3, 'flat stays level');
+  assert.ok(rise('lob') > rise('topspin'), 'lob lifts most steeply');
+});
+
+test('the drop shot is compact, and has the most open face', () => {
+  const travel = shot => Math.abs(samplePose(shot, 2, STRIKE).head[1] - samplePose(shot, 0, STRIKE).head[1]);
+  assert.ok(travel('drop') < travel('slice') / 2);
+  assert.ok(samplePose('drop', 1, STRIKE).tilt > samplePose('slice', 1, STRIKE).tilt);
+});
+
+test('backhands mirror the forehand path across the body', () => {
+  const fore = samplePose('topspin', 0.6, [0, 0.45, 1], false), back = samplePose('topspin', 0.6, [0, 0.45, 1], true);
+  assert.ok(Math.abs(fore.head[0] + back.head[0]) < 1e-9);
+  assert.ok(Math.abs(fore.head[2] - back.head[2]) < 1e-9);
+});
+
+test('a low ball does not push the racket through the court', () => {
+  assert.ok(heightAt('topspin', 0.6, [0.6, 0.45, 0.25]) >= 0.12);
+});
+
+test('the body coils on the backswing, uncoils through contact, and topspin drives up from the legs', () => {
+  assert.ok(bodyPose('flat', 0, 0, false).yaw > 1);
+  assert.equal(bodyPose('flat', 1, 0, false).yaw, 0);
+  assert.ok(bodyPose('flat', 2, 0, false).yaw < 0);
+  assert.ok(bodyPose('flat', 0, 0, true).yaw < -1, 'backhand coils the other way');
+  assert.ok(bodyPose('topspin', 0, 0, false).crouch > bodyPose('topspin', 2, 0, false).crouch);
+});
+
+test('the swing starts on its own as the ball arrives but waits for the release', () => {
+  const load = { phase: 'load', serve: false, pressedAt: 0, contactAt: 0, endsAt: 0 };
+  assert.equal(swingTimeline(load, 1, 2).s, 0);
+  assert.ok(swingTimeline(load, 1.9, 2).s > 0.3);
+  assert.equal(swingTimeline(load, 3, 2).s, 0.85, 'holds short of contact if never released');
+  assert.equal(swingTimeline({ ...load, phase: 'forward', contactAt: 2 }, 2, 2).s, 1);
+  const follow = swingTimeline({ ...load, phase: 'follow', contactAt: 2, endsAt: 2.4 }, 2.2, null);
+  assert.ok(follow.s > 1.5 && follow.ready === 0);
+  assert.equal(swingTimeline({ ...load, phase: 'follow', contactAt: 2, endsAt: 2.4 }, 2.4, null).ready, 1);
+});
+
+test('screen positions map back to the right spot on the court', () => {
+  for (const [x, y] of [[0, -11], [3.5, -6], [-4, -2], [2, 9]]) {
+    const screen = project(x, y, 0);
+    const ground = unproject(screen.x, screen.y);
+    assert.ok(Math.abs(ground.x - x) < 1e-6 && Math.abs(ground.y - y) < 1e-6, `${x},${y} became ${ground.x},${ground.y}`);
+  }
+});
+
+test('pointed targets stay inside the lines and suit the stroke', () => {
+  assert.ok(Math.abs(shotTarget('flat', 9, -30).x) < COURT.singlesHalf);
+  assert.ok(shotTarget('flat', 0, -30).depth < COURT.halfLength);
+  assert.ok(shotTarget('drop', 0, -11).depth <= 4.5, 'a drop shot cannot be aimed deep');
+  assert.ok(shotTarget('lob', 0, -2).depth >= 7.5, 'a lob cannot be aimed short');
+});
+
+function aimedShot(shot, target, err = 0, seed = 9) {
+  const sim = new TennisSim({ practice: true, rng: seeded(seed) });
+  sim.events = [];
+  sim.setAim('near', target);
+  const p = sim.players.near;
+  let released = false, landed = null;
+  sim.press('near', shot);
+  for (let i = 0; i < 1500 && !landed; i++) {
+    const plan = sim.plans.near;
+    if (plan && !released) { p.x = plan.x - 0.5; p.y = plan.y + 0.2; p.vx = 0; p.vy = 0; }
+    if (plan && !released && sim.t >= plan.t + err) { sim.release('near'); released = true; }
+    sim.tick(1 / 120);
+    if (released) landed = sim.events.find(e => e.type === 'bounce' && e.y < 0) ?? null;
+  }
+  return { landed, call: sim.events.find(e => e.type === 'call')?.text };
+}
+
+test('a perfect shot lands where the mouse pointed, even while running the other way', () => {
+  for (const shot of ['topspin', 'flat', 'slice', 'lob']) {
+    for (const target of [{ x: 3.4, y: -9.5 }, { x: -3.4, y: -9.5 }, { x: 2, y: -8 }]) {
+      const { landed, call } = aimedShot(shot, target);
+      assert.equal(call, 'IN', `${shot} to ${target.x}`);
+      assert.ok(Math.abs(landed.x - target.x) < 0.5 && Math.abs(landed.y - target.y) < 0.7, `${shot} aimed ${target.x},${target.y} landed ${landed.x},${landed.y}`);
+    }
+  }
+  const drop = aimedShot('drop', { x: -2, y: -3 });
+  assert.ok(Math.abs(drop.landed.x + 2) < 0.5 && Math.abs(drop.landed.y + 3) < 0.6);
+});
+
+test('poor timing still sprays a pointed shot, so aiming never replaces timing', () => {
+  const inRate = (shot, err) => {
+    let good = 0, total = 0;
+    for (const x of [3.4, -3.4]) for (let seed = 1; seed <= 15; seed++) {
+      total++;
+      if (aimedShot(shot, { x, y: -10.3 }, err, seed * 97).call === 'IN') good++;
+    }
+    return good / total;
+  };
+  for (const shot of ['topspin', 'flat', 'slice']) {
+    assert.equal(inRate(shot, 0), 1, `${shot} perfect always lands in the corners`);
+    assert.ok(inRate(shot, -0.15) <= 0.6, `${shot} early misses corners`);
+    assert.ok(inRate(shot, 0.15) <= 0.6, `${shot} late misses corners`);
+  }
+});
+
+test('with no direction held, a wind-up takes small steps to set up beside the ball', () => {
+  const sim = new TennisSim({ practice: true, rng: seeded(3) });
+  sim.events = [];
+  const p = sim.players.near;
+  for (let i = 0; i < 400 && !sim.plans.near; i++) sim.tick(1 / 120);
+  const plan = sim.plans.near;
+  p.x = plan.x - 1.5; p.y = plan.y + 0.6;
+  sim.press('near', 'topspin');
+  const before = Math.hypot(sim.plans.near.x - p.x, sim.plans.near.y - p.y);
+  for (let i = 0; i < 40; i++) sim.tick(1 / 120);
+  assert.ok(Math.hypot(sim.plans.near.x - p.x, sim.plans.near.y - p.y) < before);
+  assert.ok(Math.hypot(p.vx, p.vy) < 2.4, 'adjustment steps never count as running through the shot');
+});
+
+function serveWith(shot) {
+  const sim = new TennisSim({ rng: seeded(), firstServer: 'near' });
+  for (let i = 0; i < 120; i++) sim.tick(1 / 120);
+  sim.press('near', shot);
+  while (sim.t - sim.tossAt < TOSS_IDEAL) sim.tick(1 / 120);
+  sim.release('near');
+  for (let i = 0; i < 20; i++) sim.tick(1 / 120);
+  const hit = sim.events.find(e => e.type === 'hit');
+  const landing = sim.path.find(s => s.bounces === 1);
+  const rebound = Math.max(...sim.path.filter(s => s.bounces === 1).map(s => s.z));
+  return { type: hit.shot, mph: hit.mph, rebound, landing };
+}
+
+test('the button you hold decides the serve, and each type plays differently', () => {
+  const flat = serveWith('flat'), kick = serveWith('topspin'), slice = serveWith('slice');
+  assert.equal(flat.type, 'flat');
+  assert.equal(kick.type, 'topspin');
+  assert.equal(slice.type, 'slice');
+  assert.ok(flat.mph > slice.mph && slice.mph > kick.mph, `pace ${flat.mph} ${slice.mph} ${kick.mph}`);
+  assert.ok(kick.rebound > flat.rebound * 1.3, `kick jumps: ${kick.rebound} vs ${flat.rebound}`);
+  assert.ok(slice.rebound < flat.rebound, `slice stays low: ${slice.rebound} vs ${flat.rebound}`);
+  for (const serve of [flat, kick, slice]) assert.ok(serve.landing.y < 0 && serve.landing.y > -COURT.serviceLine && serve.landing.x < 0);
+  assert.equal(serveTypeFor('lob'), 'topspin');
+  assert.equal(serveTypeFor('drop'), 'slice');
 });

@@ -8,8 +8,8 @@ import type { AnnouncerEvent, ShotTiming, ShotType } from './types';
 import { Commentator, pointSituation } from './commentary';
 import type { Situation } from './commentary';
 import { InputDevice, mapGamepads, padEnd, shotForKey, SIDE_KEYS } from './input';
-import { CourtRenderer, H, project, SHOT_COLORS, W } from './render';
-import { REACH, TennisSim } from './sim';
+import { CourtRenderer, H, project, SHOT_COLORS, unproject, W } from './render';
+import { REACH, shotTarget, TennisSim } from './sim';
 import type { End, SimEvent } from './sim';
 
 const MODE_OPTIONS = ['1 PLAYER  vs  CPU', '2 PLAYERS  LOCAL', 'TIMING PRACTICE'];
@@ -20,6 +20,7 @@ const AI_COLORS = ['#00ff88', '#ffaa00', '#ff2244'];
 const PRACTICE_BEST_KEY = 'pong_practice_best';
 const PERFECT_COLOR = '#39e36f';
 const SHOT_LABELS: Record<ShotType, string> = { topspin: 'TOPSPIN', flat: 'FLAT', slice: 'SLICE', lob: 'LOB', drop: 'DROP SHOT' };
+const SERVE_LABELS: Partial<Record<ShotType, string>> = { flat: 'FLAT SERVE', topspin: 'KICK SERVE', slice: 'SLICE SERVE' };
 const TIMING_COLORS: Record<ShotTiming, string> = { perfect: PERFECT_COLOR, good: '#fff176', early: '#ffb300', late: '#ffb300', none: '#ffffff' };
 
 export class PongEngine {
@@ -57,6 +58,9 @@ export class PongEngine {
   private lastInput: InputDevice = 'keyboard';
   private heldPadKeys = new Set<string>();
   private padMove: Record<End, { x: number; y: number }> = { near: { x: 0, y: 0 }, far: { x: 0, y: 0 } };
+  private aim: { x: number; y: number } | null = null;
+  private mouseHeldKey: string | null = null;
+  private drag: { startX: number; startY: number; baseX: number; baseY: number } | null = null;
   private touchPointers = new Map<number, { end: End; startX: number; startY: number; x: number; y: number }>();
   private keydownHandler = (e: KeyboardEvent) => this.onKeyDown(e);
   private keyupHandler = (e: KeyboardEvent) => this.releaseKey(e.key);
@@ -100,6 +104,8 @@ export class PongEngine {
     canvas.addEventListener('pointermove', this.onPointerMove);
     canvas.addEventListener('pointerup', this.onPointerEnd);
     canvas.addEventListener('pointercancel', this.onPointerEnd);
+    canvas.addEventListener('pointerleave', this.onPointerLeave);
+    canvas.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('gamepadconnected', this.padConnectHandler);
     window.addEventListener('gamepaddisconnected', this.padDisconnectHandler);
     if (window.matchMedia?.('(pointer: coarse)').matches) this.lastInput = 'touch';
@@ -114,6 +120,8 @@ export class PongEngine {
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerup', this.onPointerEnd);
     this.canvas.removeEventListener('pointercancel', this.onPointerEnd);
+    this.canvas.removeEventListener('pointerleave', this.onPointerLeave);
+    this.canvas.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('gamepadconnected', this.padConnectHandler);
     window.removeEventListener('gamepaddisconnected', this.padDisconnectHandler);
   }
@@ -193,14 +201,17 @@ export class PongEngine {
     this.keys[key] = false;
     if (!this.sim || this.state === GameState.PAUSED) return;
     const mapped = shotForKey(key);
-    if (mapped && this.isHuman(mapped.end)) this.sim.release(mapped.end);
+    if (mapped && !this.twoPlayer) this.sim.release('near');
+    else if (mapped && this.isHuman(mapped.end)) this.sim.release(mapped.end);
     if (key === ' ' && this.isHuman(this.sim.server) && this.sim.players[this.sim.server].swing.serve) this.sim.release(this.sim.server);
   }
 
   private pressShot(key: string) {
     if (!this.sim) return;
     const mapped = shotForKey(key);
-    if (mapped && this.isHuman(mapped.end)) this.sim.press(mapped.end, mapped.shot);
+    // Playing alone, either set of keys works, so one hand can stay on WASD and the other on the mouse.
+    if (mapped && !this.twoPlayer) this.sim.press('near', mapped.shot);
+    else if (mapped && this.isHuman(mapped.end)) this.sim.press(mapped.end, mapped.shot);
     if (key === ' ' && this.sim.phase === 'serve' && this.isHuman(this.sim.server)) this.sim.press(this.sim.server, 'flat');
   }
 
@@ -254,18 +265,63 @@ export class PongEngine {
 
   private inPlay() { return this.state === GameState.SERVE || this.state === GameState.PLAYING || this.state === GameState.GOAL; }
 
+  /** Pointing at the far court aims the near player's shots, leaving the running keys free. */
+  private updateAim(clientX: number, clientY: number) {
+    const point = this.toCanvasPoint(clientX, clientY);
+    const ground = unproject(point.x, point.y);
+    this.aim = ground && ground.y < -0.3 ? ground : null;
+    return this.aim !== null;
+  }
+
+  private onPointerLeave = (e: PointerEvent) => {
+    if (e.pointerType === 'mouse' && !this.drag) this.aim = null;
+  };
+
+  private onContextMenu = (e: Event) => {
+    if (this.inPlay()) e.preventDefault();
+  };
+
   private onPointerDown = (e: PointerEvent) => {
+    if (e.pointerType === 'mouse') {
+      // In a rally, hold the left button for topspin and the right for slice, as with the keys.
+      if (this.inPlay() && (e.button === 0 || e.button === 2)) {
+        this.mouseHeldKey = e.button === 0 ? SIDE_KEYS.near.topspin : SIDE_KEYS.near.slice;
+        this.pressKey(this.mouseHeldKey);
+        // Press anywhere and drag: the target moves with the drag, and letting go swings.
+        const start = this.toCanvasPoint(e.clientX, e.clientY);
+        const base = this.aim ?? { x: 0, y: -8.5 };
+        this.drag = { startX: start.x, startY: start.y, baseX: base.x, baseY: base.y };
+        this.aim = base;
+        this.canvas.setPointerCapture?.(e.pointerId);
+      }
+      return;
+    }
     if (e.pointerType !== 'touch') return;
     this.setLastInput('touch');
     this.audio.init();
     if (!this.inPlay()) return;
     const point = this.toCanvasPoint(e.clientX, e.clientY);
+    // On your own in a match, tapping the far court places the aim; two players each drag their own half.
+    if (!this.twoPlayer && this.updateAim(e.clientX, e.clientY)) return;
     const end: End = this.twoPlayer && point.y < H * 0.42 ? 'far' : 'near';
     this.touchPointers.set(e.pointerId, { end, startX: point.x, startY: point.y, x: point.x, y: point.y });
     this.canvas.setPointerCapture?.(e.pointerId);
   };
 
   private onPointerMove = (e: PointerEvent) => {
+    if (e.pointerType === 'mouse') {
+      if (this.drag) {
+        const point = this.toCanvasPoint(e.clientX, e.clientY);
+        this.aim = {
+          x: Math.max(-4.5, Math.min(4.5, this.drag.baseX + (point.x - this.drag.startX) * 0.035)),
+          y: Math.max(-11.8, Math.min(-1, this.drag.baseY + (point.y - this.drag.startY) * 0.05)),
+        };
+      } else if (this.sim?.players.near.swing.phase !== 'forward') {
+        // Hovering aims too, but not while a released swing is on its way to the ball.
+        this.updateAim(e.clientX, e.clientY);
+      }
+      return;
+    }
     const touch = this.touchPointers.get(e.pointerId);
     if (!touch) return;
     const point = this.toCanvasPoint(e.clientX, e.clientY);
@@ -273,7 +329,14 @@ export class PongEngine {
     touch.y = point.y;
   };
 
-  private onPointerEnd = (e: PointerEvent) => { this.touchPointers.delete(e.pointerId); };
+  private onPointerEnd = (e: PointerEvent) => {
+    this.touchPointers.delete(e.pointerId);
+    if (e.pointerType === 'mouse' && this.mouseHeldKey) {
+      this.releaseKey(this.mouseHeldKey);
+      this.mouseHeldKey = null;
+      this.drag = null;
+    }
+  };
 
   private touchMove(end: End) {
     for (const touch of this.touchPointers.values()) {
@@ -472,7 +535,7 @@ export class PongEngine {
         }
         this.rumble(event.end, perfect ? 0.9 : event.shot === 'flat' ? 0.5 : 0.2, 0.3, perfect ? 170 : 70);
         if (human) {
-          const type = event.serve ? `${SHOT_LABELS[event.shot]} SERVE` : SHOT_LABELS[event.shot];
+          const type = event.serve ? SERVE_LABELS[event.shot] ?? 'SERVE' : SHOT_LABELS[event.shot];
           const stretched = event.stretched ? '  STRETCHED' : event.onTheRun ? '  ON THE RUN' : '';
           this.readout = {
             text: `${type}  ${event.mph} MPH  ${event.rpm} RPM  ${event.timing.toUpperCase()}${stretched}`,
@@ -569,11 +632,13 @@ export class PongEngine {
       const map = SIDE_KEYS[end];
       const touch = this.touchMove(end);
       const pad = this.padMove[end];
-      let x = (this.keys[map.right] ? 1 : 0) - (this.keys[map.left] ? 1 : 0);
-      let y = (this.keys[map.down] ? 1 : 0) - (this.keys[map.up] ? 1 : 0);
+      const held = (name: 'right' | 'left' | 'down' | 'up') => this.keys[map[name]] || (!this.twoPlayer && this.keys[SIDE_KEYS.far[name]]);
+      let x = (held('right') ? 1 : 0) - (held('left') ? 1 : 0);
+      let y = (held('down') ? 1 : 0) - (held('up') ? 1 : 0);
       if (touch) { x = touch.x; y = touch.y; }
       else if (pad.x || pad.y) { x = pad.x; y = pad.y; }
       sim.setMove(end, x, y);
+      if (end === 'near') sim.setAim('near', this.aim);
     }
   }
 
@@ -675,6 +740,18 @@ export class PongEngine {
       this.render.drawGroundRing(ctx, sim.landing.x, sim.landing.y, 0.42, '#ffffff', 0.6);
     }
 
+    if (this.aim && this.isHuman('near')) {
+      const swing = sim.players.near.swing;
+      if (sim.phase === 'serve' && sim.server === 'near') {
+        // A serve must land in the diagonal box, so the marker shows where it will really go.
+        const boxSide = -Math.sign(sim.players.near.x || 1);
+        this.render.drawAimMarker(ctx, boxSide * Math.max(0.4, Math.min(3.75, Math.abs(this.aim.x))), -Math.max(3, Math.min(6, Math.abs(this.aim.y))));
+      } else {
+        const target = shotTarget(swing.shot, this.aim.x, this.aim.y);
+        this.render.drawAimMarker(ctx, target.x, -target.depth);
+      }
+    }
+
     // Footwork cue: where you will meet the ball, green in the sweet spot, amber at a stretch, red out of reach.
     for (const end of ['far', 'near'] as const) {
       const plan = sim.plans[end];
@@ -764,9 +841,9 @@ export class PongEngine {
     if (sim.phase === 'serve' && !this.practice && this.isHuman(sim.server) && sim.tossAt === null) {
       const second = sim.faults === 1 ? 'SECOND SERVE - ' : '';
       this.platedText(second + this.prompt(
-        sim.server === 'near' ? 'HOLD Z/C/V TO TOSS - RELEASE IN THE GREEN' : 'HOLD Q/R/E TO TOSS - RELEASE IN THE GREEN',
-        'HOLD A, B OR X TO TOSS - RELEASE IN THE GREEN',
-        'HOLD A SHOT TO TOSS - RELEASE IN THE GREEN',
+        sim.server === 'near' ? 'HOLD C FLAT, V KICK OR Z SLICE - RELEASE IN THE GREEN' : 'HOLD R FLAT, E KICK OR Q SLICE - RELEASE IN THE GREEN',
+        'HOLD X FLAT, A KICK OR B SLICE - RELEASE IN THE GREEN',
+        'HOLD FLAT, TOPSPIN OR SLICE - RELEASE IN THE GREEN',
       ), W / 2, 300, 8, '#ffffff');
     } else if (sim.phase === 'serve' && !this.practice && sim.faults === 1) {
       this.platedText('SECOND SERVE', W / 2, 300, 8, '#ffffff');

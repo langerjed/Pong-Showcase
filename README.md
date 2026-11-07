@@ -40,9 +40,10 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 A tennis game with a 3D ball, a broadcast camera, and real scoring (15-30-40, deuce, faults, first to 3 games).
 
 - **Move and aim:** arrow keys run around the court. The direction you hold at the swing aims the shot.
+- **Mouse:** run with `WASD` or the arrows. Hold left-click for topspin or right-click for slice, drag to move the target, and let go to swing. Hovering over the far court also aims. Tap the far court to aim on touch.
 - **Shots:** `V` topspin, `C` flat, `Z` slice, `B` lob, `X` drop shot. Each has its own pace, arc, and bounce.
 - **Timing:** hold a shot to wind up, then release as the marker hits the green. Early sails long, late finds the net, and way off misses the ball.
-- **Serve:** hold `Space` or a shot key to toss, and release in the green at the top of the toss.
+- **Serve:** the button you hold picks the type: `C` or `Space` flat (fastest), `V` or `B` kick (jumps up high), `Z` or `X` slice (stays low and swings sideways). Release in the green at the top of the toss.
 - **Timing practice:** a coach feeds balls with no score, and your perfect-shot streak is saved in the browser.
 - **Two players:** P1 (far end) uses `WASD` with `E` `R` `Q` `G` `F`. P2 (near end) uses the arrows with `V` `C` `Z` `B` `X`.
 - **Controller:** stick moves and aims, `A` topspin, `X` flat, `B` slice, `Y` lob, `RB`/`RT` drop, `Start` pauses. In two-player, the first controller is P1.

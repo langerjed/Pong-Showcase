@@ -74,15 +74,23 @@ export const SHOTS: Record<ShotType, ShotSpec> = {
   topspin: { speed: 27, spin: 1.0, bounceE: 0.62, bounceF: 0.72, curve: 0, highArc: false, depth: 9.3, depthRange: 1.5, maxAimX: 3.6 },
   flat: { speed: 34, spin: 0.15, bounceE: 0.6, bounceF: 0.76, curve: 0, highArc: false, depth: 9.6, depthRange: 1.4, maxAimX: 3.7 },
   slice: { speed: 21, spin: -0.7, bounceE: 0.52, bounceF: 0.74, curve: 1.4, highArc: false, depth: 8.8, depthRange: 2, maxAimX: 3.4 },
-  lob: { speed: 18, spin: 0.5, bounceE: 0.5, bounceF: 0.62, curve: 0, highArc: true, depth: 9.8, depthRange: 1.2, maxAimX: 3 },
+  lob: { speed: 23, spin: 0.5, bounceE: 0.5, bounceF: 0.62, curve: 0, highArc: true, depth: 9.8, depthRange: 1.2, maxAimX: 3 },
   drop: { speed: 12, spin: -1.3, bounceE: 0.55, bounceF: 0.32, curve: 0, highArc: false, depth: 2.6, depthRange: 0.8, maxAimX: 3 },
 };
 
 const SERVES: Partial<Record<ShotType, ShotSpec>> = {
-  flat: { ...SHOTS.flat, speed: 41, spin: 0.2, bounceE: 0.55, bounceF: 0.68 },
-  topspin: { ...SHOTS.topspin, speed: 32, spin: 1.1, bounceE: 0.68, bounceF: 0.66 },
-  slice: { ...SHOTS.slice, speed: 35, spin: -0.6, bounceE: 0.52, bounceF: 0.66, curve: 2 },
+  // Flat is the fastest and skids through. Kick is slowest and jumps up high. Slice stays low and swings sideways.
+  flat: { ...SHOTS.flat, speed: 41, spin: 0.2, bounceE: 0.55, bounceF: 0.7 },
+  topspin: { ...SHOTS.topspin, speed: 31, spin: 1.2, bounceE: 0.85, bounceF: 0.62 },
+  slice: { ...SHOTS.slice, speed: 35, spin: -0.25, bounceE: 0.45, bounceF: 0.68, curve: 3 },
 };
+
+/** Every shot button serves: the lob button also kicks, and the drop button also slices. */
+export function serveTypeFor(shot: ShotType): ShotType {
+  if (shot === 'lob') return 'topspin';
+  if (shot === 'drop') return 'slice';
+  return shot;
+}
 
 export interface BallState {
   x: number; y: number; z: number;
@@ -95,6 +103,7 @@ export interface BallState {
 
 export type BallEvent = 'bounce' | 'net' | null;
 
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
 export function netHeightAt(x: number) {
@@ -180,7 +189,9 @@ export function solveLaunch(from: { x: number; y: number; z: number }, tx: numbe
       const long = flightOf(from, dirX, dirY, current, elevation, spec).distance > dist;
       if (long === spec.highArc) lo = elevation; else hi = elevation;
     }
-    if (flightOf(from, dirX, dirY, current, elevation, spec).netClear >= 0.12) break;
+    // A drop shot has no pace to fall back on, so it plays with more room over the net.
+    const margin = spec.depth < 4 ? 0.4 : 0.12;
+    if (flightOf(from, dirX, dirY, current, elevation, spec).netClear >= margin) break;
     current *= 0.93;
   }
   return {
@@ -206,6 +217,21 @@ export function correctForCurve(from: { x: number; y: number; z: number }, launc
     vy = Math.sin(heading) * horizontal;
   }
   return { ...launch, vx, vy };
+}
+
+const TARGET_DEPTH: Record<ShotType, [number, number]> = {
+  topspin: [4, 11.2],
+  flat: [4.5, 11.3],
+  slice: [3.5, 11],
+  lob: [7.5, 11.2],
+  drop: [1.4, 4.5],
+};
+const MAX_TARGET_X = COURT.singlesHalf - 0.35;
+
+/** Where a pointed-at spot lands for a stroke: inside the lines, and within what that stroke can do. */
+export function shotTarget(shot: ShotType, x: number, y: number) {
+  const [near, far] = TARGET_DEPTH[shot];
+  return { x: clamp(x, -MAX_TARGET_X, MAX_TARGET_X), depth: clamp(Math.abs(y), near, far) };
 }
 
 export interface TimingResult {
@@ -304,7 +330,6 @@ const newPlayer = (end: End): Player => ({
 
 const other = (end: End): End => (end === 'near' ? 'far' : 'near');
 const endSign = (end: End) => (end === 'near' ? 1 : -1);
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const POINT_NAMES = ['0', '15', '30', '40'];
 
 export class TennisSim {
@@ -330,6 +355,7 @@ export class TennisSim {
   events: SimEvent[] = [];
   readonly isPractice: boolean;
 
+  private aimTargets: Partial<Record<End, { x: number; y: number } | null>> = {};
   private cfg: SimConfig;
   private rng: () => number;
   private acc = 0;
@@ -393,6 +419,11 @@ export class TennisSim {
     this.ball = { ...this.ball, x: s.x - endSign(this.server) * 0.3, y: s.y - endSign(this.server) * 0.25, z: 1.05, vx: 0, vy: 0, vz: 0, bounces: 0, netted: false, spin: 0, curve: 0 };
   }
 
+  /** A spot on the opponent's court to aim at, chosen separately from running. Null falls back to the held direction. */
+  setAim(end: End, target: { x: number; y: number } | null) {
+    this.aimTargets[end] = target;
+  }
+
   setMove(end: End, x: number, y: number) {
     const p = this.players[end];
     const size = Math.hypot(x, y);
@@ -407,7 +438,7 @@ export class TennisSim {
       if (end !== this.server || this.tossAt !== null || this.t < this.serveReadyAt) return;
       this.tossAt = this.t;
       this.ballHeld = false;
-      p.swing = { ...newSwing(), phase: 'load', shot: SERVES[shot] ? shot : 'flat', serve: true, pressedAt: this.t };
+      p.swing = { ...newSwing(), phase: 'load', shot: serveTypeFor(shot), serve: true, pressedAt: this.t };
       return;
     }
     if (this.phase === 'dead') return;
@@ -513,6 +544,19 @@ export class TennisSim {
         if (this.tossAt !== null) inputX = 0;
       }
     }
+    // Winding up with no direction held, the player takes small adjustment steps to set up beside the ball.
+    const plan = this.plans[p.end];
+    if (sw.phase === 'load' && !sw.serve && plan && inputX === 0 && inputY === 0 && !this.isCpu(p.end)) {
+      const side = sw.hand === 'fh' ? 1 : -1;
+      const dx = plan.x - endSign(p.end) * side * 0.6 - p.x;
+      const dy = plan.y + endSign(p.end) * 0.45 - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0.08 && dist < 2.4) {
+        const pace = Math.min(1, dist / 0.4) * 0.34;
+        inputX = (dx / dist) * pace;
+        inputY = (dy / dist) * pace;
+      }
+    }
     const targetVx = inputX * RUN_SPEED * scale;
     const targetVy = inputY * RUN_SPEED * scale;
     const maxChange = RUN_ACCEL * h;
@@ -537,8 +581,14 @@ export class TennisSim {
     const plan = this.plans[end];
     if (plan && plan.t <= this.t) return;
     const best = this.bestStrike(end);
-    if (best) this.plans[end] = best;
-    else delete this.plans[end];
+    if (best) {
+      this.plans[end] = best;
+      // The wing is chosen early, as a real player does, so the swing cannot flip sides at the last instant.
+      const p = this.players[end];
+      if (p.swing.phase === 'load' && !p.swing.serve && best.t - this.t > 0.22) p.swing.hand = this.handFor(p, best.x);
+    } else {
+      delete this.plans[end];
+    }
   }
 
   private validSample(s: PathSample, end: End) {
@@ -588,6 +638,7 @@ export class TennisSim {
       if (this.isPractice && p.end === 'near') this.scorePractice(null);
       return;
     }
+    p.swing.contact = { x: b.x, y: b.y, z: b.z };
     this.hitBall(p, dist);
   }
 
@@ -606,17 +657,21 @@ export class TennisSim {
 
     // The direction held at the swing picks the target.
     const aimX = sw.aimX;
-    const tx = aimX !== 0 ? aimX * spec.maxAimX : clamp(-p.x * 0.25, -1.5, 1.5);
+    const pointed = this.aimTargets[p.end] ? shotTarget(sw.shot, this.aimTargets[p.end]!.x, this.aimTargets[p.end]!.y) : null;
+    const tx = pointed ? pointed.x : aimX !== 0 ? aimX * spec.maxAimX : clamp(-p.x * 0.25, -1.5, 1.5);
     // Up-screen goes deeper for the near player, down-screen for the far player.
     const depthInput = p.end === 'near' ? -sw.aimY : sw.aimY;
-    const ty = -sign * clamp(spec.depth + depthInput * spec.depthRange, 1.6, COURT.halfLength - 0.5);
+    const ty = -sign * (pointed ? pointed.depth : clamp(spec.depth + depthInput * spec.depthRange, 1.6, COURT.halfLength - 0.5));
 
     const curve = spec.curve * (tx >= b.x ? 1 : -1);
-    const launch = correctForCurve(b, solveLaunch(b, tx, ty, speed, spec), curve, spec, tx, ty);
+    // Aim with the spin this contact will really produce, or extra spin would pull a good shot short.
+    const actual = { ...spec, spin: spec.spin * timing.spin };
+    const launch = correctForCurve(b, solveLaunch(b, tx, ty, speed, actual), curve, actual, tx, ty);
     const handSign = sw.hand === 'fh' ? 1 : -1;
     const scatter = (this.rng() - 0.5) * (stretch * 5 + onTheRun * 3);
     const azimuth = (timing.pull * handSign * sign + scatter) * DEG;
-    const liftError = timing.lift * (spec.highArc ? 1.6 : 1) * DEG;
+    // A soft drop shot's touch tolerates less of a launch error before missing outright, so it is scaled down.
+    const liftError = timing.lift * (sw.shot === 'drop' ? 0.55 : sw.shot === 'lob' ? 0.8 : 1) * DEG;
 
     const horizontal = Math.hypot(launch.vx, launch.vy);
     const heading = Math.atan2(launch.vy, launch.vx) + azimuth;
@@ -653,15 +708,18 @@ export class TennisSim {
     const b = this.ball;
     b.x = p.x + sign * 0.15;
     b.y = p.y - sign * 0.3;
+    sw.contact = { x: b.x, y: b.y, z: b.z };
 
     const boxSide = -Math.sign(this.serveX());
     const aim = p.inputX || sw.aimX;
-    const tx = boxSide * clamp(2.1 + aim * boxSide * 1.5, 0.5, 3.75);
-    const ty = -sign * (COURT.serviceLine - 0.9);
+    const pointed = this.aimTargets[p.end];
+    const tx = boxSide * (pointed ? clamp(Math.abs(pointed.x), 0.4, 3.75) : clamp(2.1 + aim * boxSide * 1.5, 0.5, 3.75));
+    const ty = -sign * (pointed ? clamp(Math.abs(pointed.y), 3, COURT.serviceLine - 0.4) : COURT.serviceLine - 0.9);
     const second = this.faults === 1 ? 0.84 : 1;
     const curve = spec.curve * boxSide * 0.5;
     const skill = this.isCpu(p.end) ? CPU_LEVELS[this.cfg.cpu?.[p.end] ?? 1].servePace : 1;
-    const launch = correctForCurve(b, solveLaunch(b, tx, ty, spec.speed * timing.pace * second * skill, spec, -14 * DEG), curve, spec, tx, ty);
+    const actual = { ...spec, spin: spec.spin * timing.spin };
+    const launch = correctForCurve(b, solveLaunch(b, tx, ty, spec.speed * timing.pace * second * skill, actual, -14 * DEG), curve, actual, tx, ty);
     const heading = Math.atan2(launch.vy, launch.vx) + timing.pull * sign * 0.8 * DEG;
     const horizontal = Math.hypot(launch.vx, launch.vy);
     const elevation = Math.atan2(launch.vz, horizontal) + timing.lift * 0.8 * DEG;

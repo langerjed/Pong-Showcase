@@ -6,6 +6,8 @@
 import { COURT, LINES, MARK_RADIUS, netHeightAt, TOSS_IDEAL, WINDOW } from './sim';
 import type { End, Player, TennisSim } from './sim';
 import type { ShotType } from './types';
+import { bodyPose, DEFAULT_CONTACT, racketPose, swingTimeline } from './strokes';
+import type { StrokeName } from './strokes';
 
 export const W = 800;
 export const H = 600;
@@ -33,20 +35,22 @@ export function project(x: number, y: number, z: number): Screen {
   return { x: W / 2 + x * s, y: CAM.screenY - (dy * U.y + dz * U.z) * s, s };
 }
 
+/** The point on the ground under a screen position, or null above the horizon. */
+export function unproject(screenX: number, screenY: number) {
+  const k = (CAM.screenY - screenY) / CAM.f;
+  const bottom = U.y - k * F.y;
+  if (Math.abs(bottom) < 1e-6) return null;
+  const dz = -CAM.z;
+  const dy = (dz * (k * F.z - U.z)) / bottom;
+  const depth = dy * F.y + dz * F.z;
+  if (depth <= 0.5) return null;
+  return { x: ((screenX - W / 2) * depth) / CAM.f, y: dy + CAM.y };
+}
+
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const lerp3 = (a: V3, b: V3, t: number): V3 => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 const ease = (t: number) => t * t * (3 - 2 * t);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-/** Hand path for each stroke in the player's frame: [right, forward, height]. */
-const STROKES: Record<ShotType, { back: V3; contact: V3; follow: V3; turn: number }> = {
-  topspin: { back: [0.5, -0.55, 0.95], contact: [0.62, 0.42, 1.0], follow: [-0.4, 0.2, 1.65], turn: 1.05 },
-  flat: { back: [0.55, -0.6, 1.25], contact: [0.62, 0.5, 1.12], follow: [-0.55, 0.4, 1.2], turn: 1.15 },
-  slice: { back: [0.5, -0.35, 1.6], contact: [0.55, 0.45, 0.95], follow: [0.2, 0.75, 0.72], turn: 0.85 },
-  lob: { back: [0.45, -0.4, 0.7], contact: [0.55, 0.35, 0.95], follow: [-0.1, 0.25, 1.95], turn: 0.8 },
-  drop: { back: [0.45, -0.1, 1.45], contact: [0.5, 0.5, 0.95], follow: [0.42, 0.62, 0.92], turn: 0.5 },
-};
-const READY_HAND: V3 = [0.2, 0.34, 1.02];
 
 interface Kit { shirt: string; trim: string; shorts: string; skin: string; hair: string; shoe: string }
 export const KITS: Record<End, Kit> = {
@@ -216,6 +220,27 @@ export class CourtRenderer {
     ctx.restore();
   }
 
+  /** Where the mouse is aiming: a target painted on the far court. */
+  drawAimMarker(ctx: CanvasRenderingContext2D, x: number, y: number) {
+    const c = project(x, y, 0);
+    const rx = 0.42 * c.s, ry = rx * 0.42;
+    ctx.save();
+    ctx.strokeStyle = '#d6f53c';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+    ctx.shadowBlur = 3;
+    ctx.beginPath();
+    ctx.ellipse(c.x, c.y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(c.x - rx * 1.4, c.y); ctx.lineTo(c.x - rx * 0.5, c.y);
+    ctx.moveTo(c.x + rx * 0.5, c.y); ctx.lineTo(c.x + rx * 1.4, c.y);
+    ctx.moveTo(c.x, c.y - ry * 1.4); ctx.lineTo(c.x, c.y - ry * 0.5);
+    ctx.moveTo(c.x, c.y + ry * 0.5); ctx.lineTo(c.x, c.y + ry * 1.4);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   drawBallMark(ctx: CanvasRenderingContext2D, x: number, y: number, alpha: number) {
     const c = project(x, y, 0);
     ctx.save();
@@ -311,10 +336,26 @@ export class CourtRenderer {
     ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.beginPath();
-    ctx.arc(p.x - radius * 0.3, p.y - radius * 0.3, radius * 0.32, 0, Math.PI * 2);
-    ctx.fill();
+    // The seam rolls forward over the top on topspin and backwards under on slice.
+    if (radius >= 3 && Math.abs(b.spin) > 0.05) {
+      const travel = b.vy < 0 ? 1 : -1;
+      const roll = (sim.t * b.spin * 26 * travel) % (Math.PI * 2);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = Math.max(0.8, radius * 0.24);
+      for (const offset of [0, Math.PI]) {
+        const y = p.y - Math.cos(roll + offset) * radius;
+        if (Math.sin(roll + offset) > 0) continue;
+        ctx.beginPath();
+        ctx.moveTo(p.x - radius, y);
+        ctx.quadraticCurveTo(p.x, y + radius * 0.35, p.x + radius, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     ctx.restore();
   }
 
@@ -330,61 +371,38 @@ export class CourtRenderer {
     const moveR = speed > 0.05 ? (p.vx * rx) / speed : 0;
     const moveF = speed > 0.05 ? (p.vy * fy) / speed : 0;
 
-    // Stroke timeline.
-    const mirror = sw.hand === 'bh' ? -1 : 1;
-    const stroke = STROKES[sw.shot];
-    let hand: V3 = READY_HAND;
-    let yaw = 0;
-    let crouch = 0.09;
-    let lunge: [number, number] = [0, 0];
-    const key = (v: V3): V3 => [v[0] * mirror, v[1], v[2]];
-    const liveContact = (): V3 | null => {
-      if (!sw.contact) return null;
-      const r = (sw.contact.x - p.x) * rx, f = (sw.contact.y - p.y) * fy;
-      const dist = Math.hypot(r, f) || 1;
-      // The racket head meets the ball, so the hand stops a racket-length short of it.
-      const pull = Math.min(dist, 0.5);
-      return [r - (r / dist) * pull, f - (f / dist) * pull, clamp(sw.contact.z - 0.1, 0.5, 2.3)];
-    };
+    // Stroke timeline: the racket head's path is the source of truth, and the body follows it.
+    const backhand = sw.hand === 'bh';
+    const mirror = backhand ? -1 : 1;
+    const strokeName: StrokeName = sw.serve ? 'serve' : sw.shot;
+    const plan = sim.plans[p.end];
+    const toLocal = (c: { x: number; y: number; z: number }): V3 => [(c.x - p.x) * rx, (c.y - p.y) * fy, c.z];
+    const tossTop = sw.serve && sim.tossAt !== null ? sim.tossAt + TOSS_IDEAL : null;
+    const arrival = tossTop ?? (plan ? plan.t : null);
+    const contactPoint: V3 = sw.contact
+      ? toLocal(sw.contact)
+      : sw.serve
+        ? [0.25, 0.3, 2.55]
+        : plan && sw.phase !== 'idle'
+          ? toLocal(plan)
+          : [DEFAULT_CONTACT[0] * mirror, DEFAULT_CONTACT[1], DEFAULT_CONTACT[2]];
+    const timeline = swingTimeline(sw, t, arrival);
+    const racket = racketPose(strokeName, timeline.s, timeline.ready, contactPoint, backhand);
+    const body = bodyPose(strokeName, timeline.s, timeline.ready, backhand);
+    const yaw = body.yaw;
+    const crouch = body.crouch;
+    const dir = racket.dir;
+    const hand: V3 = [racket.head[0] - dir[0] * 0.5, racket.head[1] - dir[1] * 0.5, racket.head[2] - dir[2] * 0.5];
 
-    if (sw.serve) {
-      const trophy: V3 = [0.42, -0.3, 1.75];
-      const strike: V3 = [0.22, 0.28, 2.3];
-      const finish: V3 = [-0.38, 0.32, 0.85];
-      if (sw.phase === 'load') {
-        const u = ease(clamp((t - sw.pressedAt) / TOSS_IDEAL, 0, 1));
-        hand = lerp3(READY_HAND, trophy, u);
-        yaw = 0.95 * u;
-        crouch = 0.09 + 0.14 * u;
-      } else if (sw.phase === 'forward') {
-        const u = clamp((t - sw.startedAt) / Math.max(0.03, sw.contactAt - sw.startedAt), 0, 1);
-        hand = lerp3(trophy, strike, u * u);
-        yaw = 0.95 * (1 - u);
-      } else if (sw.phase === 'follow') {
-        const u = clamp((t - sw.contactAt) / (sw.endsAt - sw.contactAt), 0, 1);
-        hand = lerp3(strike, finish, ease(u));
-        yaw = -0.7 * ease(u);
-        crouch = 0.14 * u;
+    // Reaching for a wide ball shifts the whole body towards it, stepping out on the leading foot.
+    let lunge: [number, number] = [0, 0];
+    if (sw.phase !== 'idle') {
+      const reachR = hand[0] - 0.2, reachF = hand[1];
+      const reach = Math.hypot(reachR, reachF);
+      if (reach > 0.5) {
+        const amount = Math.min(1.1, reach - 0.5) * (1 - timeline.ready);
+        lunge = [(reachR / reach) * amount, (reachF / reach) * amount];
       }
-    } else if (sw.phase === 'load') {
-      const u = ease(clamp((t - sw.pressedAt) / 0.2, 0, 1));
-      hand = lerp3(READY_HAND, key(stroke.back), u);
-      yaw = stroke.turn * mirror * u;
-      crouch = 0.09 + 0.1 * u;
-    } else if (sw.phase === 'forward') {
-      const u = clamp((t - sw.startedAt) / Math.max(0.03, sw.contactAt - sw.startedAt), 0, 1);
-      const contact = liveContact() ?? key(stroke.contact);
-      hand = lerp3(key(stroke.back), contact, u * u);
-      yaw = stroke.turn * mirror * (1 - u * 1.15);
-      crouch = 0.19 - 0.08 * u;
-      const reach = Math.hypot(contact[0], contact[1]);
-      if (reach > 0.75) lunge = [(contact[0] / reach) * (reach - 0.75) * 0.7 * u, (contact[1] / reach) * (reach - 0.75) * 0.7 * u];
-    } else if (sw.phase === 'follow') {
-      const u = clamp((t - sw.contactAt) / Math.max(0.05, sw.endsAt - sw.contactAt), 0, 1);
-      const settled = u > 0.7 ? ease((u - 0.7) / 0.3) : 0;
-      hand = lerp3(lerp3(liveContact() ?? key(stroke.contact), key(stroke.follow), ease(Math.min(1, u / 0.7))), READY_HAND, settled);
-      yaw = -stroke.turn * 0.6 * mirror * ease(Math.min(1, u / 0.7)) * (1 - settled);
-      crouch = 0.1;
     }
 
     const hop = t - p.splitAt < 0.2 ? Math.sin(((t - p.splitAt) / 0.2) * Math.PI) * 0.1 : 0;
@@ -479,9 +497,9 @@ export class CourtRenderer {
       const u = ease(clamp((t - sw.pressedAt) / (TOSS_IDEAL * 0.8), 0, 1));
       offHand = lerp3([-0.22, 0.3, 1.1], [-0.16, 0.3, 2.3], u);
     } else if (twoHanded) {
-      offHand = [hand[0] * 0.9, hand[1] * 0.9, hand[2] - 0.02];
+      offHand = [hand[0] + dir[0] * 0.13, hand[1] + dir[1] * 0.13, hand[2] + dir[2] * 0.13];
     } else if (sw.phase === 'idle' && runAmount < 0.25) {
-      offHand = [-0.1, 0.36, 1.05]; // both hands on the racket in the ready position
+      offHand = [hand[0] + dir[0] * 0.27, hand[1] + dir[1] * 0.27, hand[2] + dir[2] * 0.27]; // cradling the throat in the ready position
     } else {
       const armSwing = Math.sin(p.runPhase) * 0.34 * runAmount;
       offHand = [offShoulder[0] - 0.14, offShoulder[1] + armSwing + 0.05, offShoulder[2] - 0.42];
@@ -511,33 +529,23 @@ export class CourtRenderer {
     const elbow = joint(racketShoulder, hand, 0.33, [0.45, -0.25, -0.75]);
     limb([racketShoulder, elbow, hand], 0.09, kit.skin);
 
-    const direction = (() => {
-      const blend = sw.phase === 'idle' ? 0 : 1;
-      const out: V3 = [hand[0] - chest[0], hand[1] - chest[1], (hand[2] - chest[2]) * 0.8];
-      const size = Math.hypot(out[0], out[1], out[2]) || 1;
-      const swingDir: V3 = [out[0] / size, out[1] / size, out[2] / size];
-      const rest: V3 = [-0.25, 0.8, 0.5];
-      return lerp3(rest, swingDir, blend);
-    })();
-    const size = Math.hypot(direction[0], direction[1], direction[2]) || 1;
-    const dir: V3 = [direction[0] / size, direction[1] / size, direction[2] / size];
     const throat: V3 = [hand[0] + dir[0] * 0.3, hand[1] + dir[1] * 0.3, hand[2] + dir[2] * 0.3];
-    const headCentre: V3 = [hand[0] + dir[0] * 0.5, hand[1] + dir[1] * 0.5, hand[2] + dir[2] * 0.5];
+    const headCentre = racket.head;
     limb([hand, throat], 0.035, '#1c2128');
-    const sideVec: V3 = (() => {
-      const cross: V3 = [dir[1], -dir[0], 0];
-      const len = Math.hypot(cross[0], cross[1]) || 1;
-      return [cross[0] / len, cross[1] / len, 0];
-    })();
+    // The face angle is what you read at contact: closed over a topspin, open under a slice.
+    const normal: V3 = [0, Math.cos(racket.tilt), Math.sin(racket.tilt)];
+    const sideRaw: V3 = [dir[1] * normal[2] - dir[2] * normal[1], dir[2] * normal[0] - dir[0] * normal[2], dir[0] * normal[1] - dir[1] * normal[0]];
+    const sideSize = Math.hypot(sideRaw[0], sideRaw[1], sideRaw[2]);
+    const sideVec: V3 = sideSize > 0.05 ? [sideRaw[0] / sideSize, sideRaw[1] / sideSize, sideRaw[2] / sideSize] : [1, 0, 0];
+    const ring = (along: number, across: number) => world(
+      headCentre[0] + dir[0] * along + sideVec[0] * across,
+      headCentre[1] + dir[1] * along + sideVec[1] * across,
+      headCentre[2] + dir[2] * along + sideVec[2] * across,
+    );
     const frame: Screen[] = [];
-    for (let a = 0; a < 16; a++) {
-      const angle = (a / 16) * Math.PI * 2;
-      const along = Math.cos(angle) * 0.17, across = Math.sin(angle) * 0.125;
-      frame.push(world(
-        headCentre[0] + dir[0] * along + sideVec[0] * across,
-        headCentre[1] + dir[1] * along + sideVec[1] * across,
-        headCentre[2] + dir[2] * along,
-      ));
+    for (let a = 0; a < 18; a++) {
+      const angle = (a / 18) * Math.PI * 2;
+      frame.push(ring(Math.cos(angle) * 0.17, Math.sin(angle) * 0.125));
     }
     ctx.fillStyle = 'rgba(240,245,250,0.28)';
     ctx.strokeStyle = near ? '#2f7bf6' : '#ffe08a';
@@ -547,11 +555,22 @@ export class CourtRenderer {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    if (frame[0].s > 30) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      for (const k of [-0.5, 0, 0.5]) {
+        const a1 = ring(k * 0.16, -0.1), a2 = ring(k * 0.16, 0.1), b1 = ring(-0.14, k * 0.11), b2 = ring(0.14, k * 0.11);
+        ctx.moveTo(a1.x, a1.y); ctx.lineTo(a2.x, a2.y);
+        ctx.moveTo(b1.x, b1.y); ctx.lineTo(b2.x, b2.y);
+      }
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
   /**
-   * The timing meter sits at the player's feet: the marker slides towards the middle as the
+   * The timing meter sits above the player's head: the marker slides towards the middle as the
    * ball reaches the strike point, and freezes where you actually swung.
    */
   drawTimingMeter(ctx: CanvasRenderingContext2D, sim: TennisSim, end: End) {
@@ -565,11 +584,11 @@ export class CourtRenderer {
     else if (plan && plan.t - sim.t < 1.25) err = sim.t - plan.t;
     if (err === null) return;
 
-    const feet = project(p.x, p.y, 0);
+    const overHead = project(p.x, p.y, 2.1);
     const halfWidth = 82;
     const range = 0.4;
-    const cx = clamp(feet.x, halfWidth + 8, W - halfWidth - 8);
-    const cy = clamp(feet.y + 15, 20, H - 44);
+    const cx = clamp(overHead.x, halfWidth + 8, W - halfWidth - 8);
+    const cy = clamp(overHead.y - 22, 12, H - 44);
     const px = (seconds: number) => (seconds / range) * halfWidth;
     ctx.save();
     ctx.fillStyle = 'rgba(5,10,20,0.82)';
