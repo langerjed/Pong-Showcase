@@ -39,6 +39,11 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 - Player vs CPU: Arrow keys move, `V` adds topspin, `Z` slices, `X` uses stop-spin, hold `C` before contact and release in the green timing zone for a perfect power shot, and `Space` serves.
 - Local two-player: Player 1 uses `W`/`S` and `E`/`A`/`D`/`F`; Player 2 uses the arrow keys and `V`/`Z`/`X`/`C`. Hold `F` or `C` to charge, then release near contact for better timing.
+- Timing: tap `V`/`Z`/`X` (or release `C`) while the meter is in the green. Spin strokes hit by timing get extra pace and spin; rushed ones spray.
+- Spin on the first wall bounce: topspin kicks up in pace, slice skids flatter, stop-spin dies.
+- Timing practice: pick it from the mode menu. A coach feeds balls, a lime ring marks the green window, and your perfect-shot streak is saved in the browser.
+- Controller: stick or D-pad moves, `A` serves and confirms, `Y` topspin, `B` slice, `X` stop-spin, any trigger or bumper charges power, `Start` pauses. In two-player, the first controller is P1 and the second is P2.
+- Touch: drag on the court to move and use the on-screen shot buttons. In two-player, each player drags their own half.
 - Toggle spoken play-by-play with the Voice button.
 
 ## Optional AI announcer

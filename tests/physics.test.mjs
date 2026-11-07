@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const {
+  applyBounceKick,
   applySpin,
   calculateServe,
   calculateShot,
@@ -8,10 +9,18 @@ const {
   getTimingProgress,
   predictInterceptY,
   reflectY,
+  toMph,
+  toRpm,
   BALL_SPEED_MAX,
   POWER_SHOT_SPEED_MAX,
 } = await import('../.test-build/physics.js');
 const { fallbackCommentary } = await import('../.test-build/announcer.js');
+const { applyDeadzone, mapGamepads, padSide } = await import('../.test-build/input.js');
+
+const pad = ({ axisY = 0, pressed = [] } = {}) => ({
+  axes: [0, axisY],
+  buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: pressed.includes(i), value: pressed.includes(i) ? 1 : 0 })),
+});
 
 test('vertical reflection handles repeated and negative wall crossings', () => {
   assert.equal(reflectY(15, 20, 580), 25);
@@ -100,4 +109,65 @@ test('local announcer produces contextual lines for game events', () => {
     kind: 'shot', shooter: 'PLAYER', shot: 'slice', scoreLeft: 2, scoreRight: 3, rallyHits: 5, playerRead: '',
   });
   assert.match(line, /slice/i);
+});
+
+test('well-timed spin strokes bite harder and rushed ones spray', () => {
+  const args = { side: 'right', hitOffset: 0.4, paddleVelocity: 0, incomingVy: 1, incomingSpeed: 6 };
+  for (const shot of ['topspin', 'slice', 'stopspin']) {
+    const plain = calculateShot({ ...args, shot });
+    const perfect = calculateShot({ ...args, shot, timing: 'perfect' });
+    const late = calculateShot({ ...args, shot, timing: 'late' });
+    assert.ok(perfect.speed > plain.speed, shot);
+    assert.ok(Math.abs(perfect.spin) > Math.abs(plain.spin), shot);
+    assert.ok(late.speed < plain.speed, shot);
+    assert.ok(perfect.speed <= BALL_SPEED_MAX, shot);
+  }
+});
+
+test('first bounce gives each stroke its own character', () => {
+  const pace = (ball) => Math.hypot(ball.vx, ball.vy);
+  const start = pace({ vx: 4, vy: 3 });
+  assert.ok(pace(applyBounceKick(4, 3, 'topspin')) > start);
+  assert.ok(pace(applyBounceKick(4, 3, 'stopspin')) < start);
+  const slice = applyBounceKick(-4, 3, 'slice');
+  assert.ok(Math.abs(pace(slice) - start) < 1e-8);
+  assert.ok(slice.vx < 0 && Math.abs(slice.vy) < 3);
+  assert.deepEqual(applyBounceKick(4, 3, 'normal'), { vx: 4, vy: 3 });
+  assert.ok(pace(applyBounceKick(7, 2, 'topspin')) <= BALL_SPEED_MAX);
+});
+
+test('shot readout converts to arcade units', () => {
+  assert.equal(toMph(5), 70);
+  assert.equal(toRpm(-1.2), 3000);
+});
+
+test('stick deadzone removes drift and keeps full range', () => {
+  assert.equal(applyDeadzone(0.1), 0);
+  assert.equal(applyDeadzone(1), 1);
+  assert.equal(applyDeadzone(-1), -1);
+  assert.ok(applyDeadzone(0.5) > 0 && applyDeadzone(0.5) < 0.5);
+});
+
+test('controllers map to the correct player', () => {
+  assert.equal(padSide(0, false), 'right');
+  assert.equal(padSide(0, true), 'left');
+  assert.equal(padSide(1, true), 'right');
+  const frame = mapGamepads([pad({ axisY: -1, pressed: [3] }), pad({ pressed: [1, 7] })], { state: 'playing', twoPlayer: true, serveSide: 'right' });
+  assert.equal(frame.axis.left, -1);
+  assert.deepEqual([...frame.keys].sort(), ['c', 'e', 'z']);
+});
+
+test('only the serving player can serve with a controller', () => {
+  const press = { pressed: [0] };
+  const ctx = { state: 'serve', twoPlayer: true };
+  assert.ok(!mapGamepads([pad(press)], { ...ctx, serveSide: 'right' }).keys.has(' '));
+  assert.ok(mapGamepads([pad(press)], { ...ctx, serveSide: 'left' }).keys.has(' '));
+  assert.ok(!mapGamepads([pad(press)], { state: 'serve', twoPlayer: false, serveSide: 'left' }).keys.has(' '));
+});
+
+test('B goes back in menus but plays a slice in a rally', () => {
+  const press = pad({ pressed: [1] });
+  assert.ok(mapGamepads([press], { state: 'mode_select', twoPlayer: false, serveSide: 'right' }).keys.has('Escape'));
+  const rally = mapGamepads([press], { state: 'playing', twoPlayer: false, serveSide: 'right' }).keys;
+  assert.ok(rally.has('z') && !rally.has('Escape'));
 });

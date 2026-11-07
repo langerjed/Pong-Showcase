@@ -41,7 +41,7 @@ export default function Home() {
         <section className="arena-section" aria-label="Pong game">
           <div className="arena-heading">
             <div className="arena-title"><span className="arena-icon">✳</span><div><strong>THE ARENA</strong><span>READY WHEN YOU ARE</span></div></div>
-            <div className="arena-status"><span className="status-pulse" /> SYSTEM ONLINE <span className="status-divider">/</span> 2 MODES</div>
+            <div className="arena-status"><span className="status-pulse" /> SYSTEM ONLINE <span className="status-divider">/</span> 3 MODES</div>
           </div>
           <div className="game-frame">
             <div className="frame-topline"><span>PS—001</span><span>SPACE TENNIS</span><span>EST. 1972</span></div>
@@ -51,17 +51,21 @@ export default function Home() {
           <div className="control-strip">
             <div className="control-item"><span className="keycap">↑</span><span className="keycap">↓</span><span className="control-label"><strong>MOVE</strong><small>ARROW KEYS</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">Z</span><span className="control-label"><strong>SLICE</strong><small>FLAT + SPIN</small></span></div>
+            <div className="control-item"><span className="keycap">Z</span><span className="control-label"><strong>SLICE</strong><small>SKIDS OFF THE WALL</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">V</span><span className="control-label"><strong>TOPSPIN</strong><small>DRIVE IT DOWN</small></span></div>
+            <div className="control-item"><span className="keycap">V</span><span className="control-label"><strong>TOPSPIN</strong><small>KICKS OFF THE WALL</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">X</span><span className="control-label"><strong>STOP-SPIN</strong><small>DROP THE PACE</small></span></div>
+            <div className="control-item"><span className="keycap">X</span><span className="control-label"><strong>STOP-SPIN</strong><small>DIES OFF THE WALL</small></span></div>
             <div className="control-divider" />
             <div className="control-item"><span className="keycap">C</span><span className="control-label"><strong>POWER</strong><small>HOLD, RELEASE IN GREEN</small></span></div>
             <div className="control-divider" />
             <div className="control-item"><span className="keycap wide">SPACE</span><span className="control-label"><strong>SERVE</strong><small>AIM WITH PADDLE</small></span></div>
             <div className="control-spacer" />
             <div className="control-hint"><span>P1</span> W/S + A/E/D/F <b>·</b> P2 ARROWS + V/Z/X/C <b>·</b> ENTER SELECT <b>·</b> ESC PAUSE</div>
+          </div>
+          <div className="input-notes">
+            <p><strong>TIMING</strong> Tap a spin shot, or release power, while the meter is in the green. Every stroke gets graded.</p>
+            <p><strong>CONTROLLER</strong> Stick or D-pad moves · A serves · Y topspin · B slice · X stop-spin · any trigger or bumper charges power · Start pauses. In two-player, the first controller is P1.</p>
           </div>
         </section>
 

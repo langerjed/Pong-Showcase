@@ -80,6 +80,17 @@ export function calculateShot(input: ShotInput): ShotResult {
     spin = direction * 0.62;
   }
 
+  // Spin strokes are graded too: a well-timed stroke bites harder, a late one is rushed and sprays.
+  if (input.shot === 'topspin' || input.shot === 'slice' || input.shot === 'stopspin') {
+    if (input.timing === 'perfect') {
+      shotSpeed *= 1.06;
+      spin *= 1.2;
+    } else if (input.timing === 'late') {
+      shotSpeed *= 0.96;
+      angle *= 1.12;
+    }
+  }
+
   const maxAngle = input.shot === 'slice' ? 0.52 : input.shot === 'stopspin' ? 0.3 : 0.85;
   angle = clamp(angle, -maxAngle, maxAngle);
   let vx = Math.cos(angle) * shotSpeed * direction;
@@ -122,4 +133,35 @@ export function applySpin(vx: number, vy: number, spin: number, dt: number) {
     vy: Math.sin(angle) * speed,
     spin: spin * Math.pow(0.985, dt * 60),
   };
+}
+
+/** Arcade conversions for the post-contact readout; not used by the simulation. */
+export function toMph(speed: number) {
+  return Math.round(speed * 14);
+}
+
+export function toRpm(spin: number) {
+  return Math.round(Math.abs(spin) * 50) * 50;
+}
+
+/**
+ * What the first bounce off a sideline does to each stroke, so spin is felt as well as seen:
+ * topspin kicks up in pace, slice skids flatter, and stop-spin dies.
+ */
+export function applyBounceKick(vx: number, vy: number, shot: ShotType) {
+  const speed = Math.hypot(vx, vy);
+  if (speed === 0) return { vx, vy };
+  if (shot === 'topspin') {
+    const scale = Math.max(speed, Math.min(speed * 1.12, BALL_SPEED_MAX)) / speed;
+    return { vx: vx * scale, vy: vy * scale };
+  }
+  if (shot === 'slice') {
+    const flatVy = vy * 0.68;
+    return { vx: Math.sign(vx || 1) * Math.sqrt(speed ** 2 - flatVy ** 2), vy: flatVy };
+  }
+  if (shot === 'stopspin') {
+    const scale = Math.max(speed * 0.84, Math.min(speed, 2.8)) / speed;
+    return { vx: vx * scale, vy: vy * scale };
+  }
+  return { vx, vy };
 }

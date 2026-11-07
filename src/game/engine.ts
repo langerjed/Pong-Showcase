@@ -7,7 +7,8 @@ import {
   GameState, Paddle, Ball, GoldBall, PowerUpDef, ShotType, ShotTiming, AnnouncerEvent,
   PowerUpInstance, ActivePowerUp, Particle, Star,
 } from './types';
-import { applySpin, calculateServe, calculateShot, getTimingGrade, getTimingProgress, predictInterceptY } from './physics';
+import { applyBounceKick, applySpin, BALL_SPEED_MAX, calculateServe, calculateShot, getTimingGrade, getTimingProgress, predictInterceptY, toMph, toRpm } from './physics';
+import { InputDevice, mapGamepads, padSide, Side } from './input';
 
 // --- Constants ---
 const W = 800, H = 600;
@@ -18,6 +19,41 @@ const GOLD_SPAWN_DELAY = 8;
 const POWERUP_SPAWN_DELAY = 15;
 const AI_SPEEDS = [3.5, 5.2, 7.2];
 const AI_NAMES = ['EASY', 'MEDIUM', 'HARD'];
+const PADDLE_SPEED = 420;
+const COURT = {
+  runoff: '#2f7a58',
+  surface: '#1f5f9e',
+  line: 'rgba(255,255,255,0.94)',
+  baselineX: 72,
+  sidelineY: 20,
+};
+const MODE_OPTIONS = ['1 PLAYER  vs  CPU', '2 PLAYERS  LOCAL', 'TIMING PRACTICE'];
+const PAUSE_OPTIONS = ['RESUME', 'QUIT TO MENU'];
+const READOUT_X = 262;
+const PRACTICE_BEST_KEY = 'pong_practice_best';
+const PERFECT_COLOR = '#d7fa59';
+const SHOT_COLORS: Record<ShotType, string> = {
+  normal: '#CCFF00',
+  topspin: '#ffb020',
+  slice: '#38e1ff',
+  stopspin: '#e3ccff',
+  power: '#ffffff',
+};
+const SHOT_LABELS: Record<ShotType, string> = {
+  normal: 'FLAT',
+  topspin: 'TOPSPIN',
+  slice: 'SLICE',
+  stopspin: 'STOP-SPIN',
+  power: 'POWER',
+};
+const SPIN_SHOT_KEYS: Record<string, { side: Side; shot: ShotType }> = {
+  v: { side: 'right', shot: 'topspin' },
+  z: { side: 'right', shot: 'slice' },
+  x: { side: 'right', shot: 'stopspin' },
+  e: { side: 'left', shot: 'topspin' },
+  a: { side: 'left', shot: 'slice' },
+  d: { side: 'left', shot: 'stopspin' },
+};
 
 const POWERUP_TYPES: PowerUpDef[] = [
   { type: 'big',   label: 'BIG', color: '#00ff88', desc: 'RACKET GROW', duration: 8 },
@@ -80,7 +116,7 @@ export class PongEngine {
   // Ball
   private ball: Ball = {
     x: W/2, y: H/2, vx: 0, vy: 0, speed: 4.55, spin: 0,
-    trail: [], lastHitBy: null, frozen: true,
+    trail: [], lastHitBy: null, frozen: true, shot: 'normal', bounced: false,
   };
   private extraBalls: Ball[] = [];
 
@@ -98,7 +134,12 @@ export class PongEngine {
   private longRallyAnnounced = false;
 
   // Particles & effects
+  private courtLayer: HTMLCanvasElement | null = null;
   private particles: Particle[] = [];
+  private floatTexts: { x: number; y: number; text: string; color: string; life: number }[] = [];
+  private lastShot: { who: string; shot: ShotType; timing: ShotTiming; mph: number; rpm: number; at: number } | null = null;
+  private hitStop = 0;
+  private toast: { text: string; until: number } | null = null;
   private stars: Star[] = [];
   private shakeX = 0;
   private shakeY = 0;
@@ -108,10 +149,28 @@ export class PongEngine {
   private keys: Record<string, boolean> = {};
   private keydownHandler: (e: KeyboardEvent) => void;
   private keyupHandler: (e: KeyboardEvent) => void;
+  private lastInput: InputDevice = 'keyboard';
+  private heldPadKeys = new Set<string>();
+  private padAxis: Record<Side, number> = { left: 0, right: 0 };
+  private touchPointers = new Map<number, Side>();
+  private touchTargets: Record<Side, number | null> = { left: null, right: null };
+  private spinPress: Partial<Record<Side, { shot: ShotType; timing: ShotTiming }>> = {};
+  private padConnectHandler = () => this.showToast('CONTROLLER CONNECTED');
+  private padDisconnectHandler = () => {
+    this.showToast('CONTROLLER DISCONNECTED');
+    if (this.state === GameState.PLAYING) this.pauseGame();
+  };
+
+  // Practice
+  practice = false;
+  private practiceStats = { perfects: 0, tries: 0, streak: 0, best: 0 };
+  private pauseSelection = 0;
+  private resumeState: GameState = GameState.PLAYING;
 
   // Callback for React state sync
   onStateChange?: (state: GameState) => void;
   onAnnouncer?: (event: AnnouncerEvent) => void;
+  onInputChange?: (device: InputDevice) => void;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -132,6 +191,7 @@ export class PongEngine {
     try {
       this.winStreak = parseInt(localStorage.getItem('jedai_streak') || '0');
       this.matchHistory = JSON.parse(localStorage.getItem('jedai_history') || '[]');
+      this.practiceStats.best = parseInt(localStorage.getItem(PRACTICE_BEST_KEY) || '0') || 0;
     } catch { /* ignore */ }
 
     // Input handlers
@@ -139,12 +199,25 @@ export class PongEngine {
     this.keyupHandler = (e: KeyboardEvent) => this.onKeyUp(e);
     document.addEventListener('keydown', this.keydownHandler);
     document.addEventListener('keyup', this.keyupHandler);
+    canvas.addEventListener('pointerdown', this.onPointerDown);
+    canvas.addEventListener('pointermove', this.onPointerMove);
+    canvas.addEventListener('pointerup', this.onPointerEnd);
+    canvas.addEventListener('pointercancel', this.onPointerEnd);
+    window.addEventListener('gamepadconnected', this.padConnectHandler);
+    window.addEventListener('gamepaddisconnected', this.padDisconnectHandler);
+    if (window.matchMedia?.('(pointer: coarse)').matches) this.lastInput = 'touch';
   }
 
   destroy() {
     cancelAnimationFrame(this.animId);
     document.removeEventListener('keydown', this.keydownHandler);
     document.removeEventListener('keyup', this.keyupHandler);
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    this.canvas.removeEventListener('pointermove', this.onPointerMove);
+    this.canvas.removeEventListener('pointerup', this.onPointerEnd);
+    this.canvas.removeEventListener('pointercancel', this.onPointerEnd);
+    window.removeEventListener('gamepadconnected', this.padConnectHandler);
+    window.removeEventListener('gamepaddisconnected', this.padDisconnectHandler);
   }
 
   start() {
@@ -157,16 +230,27 @@ export class PongEngine {
   }
 
   // ---- Input ----
+  // Keyboard, controller and touch buttons all arrive here as key names.
   private onKeyDown(e: KeyboardEvent) {
-    this.keys[e.key] = true;
     if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) {
       e.preventDefault();
     }
+    this.setLastInput('keyboard');
+    this.pressKey(e.key);
+  }
+
+  private onKeyUp(e: KeyboardEvent) {
+    this.releaseKey(e.key);
+  }
+
+  pressKey(key: string) {
+    this.recordSpinPress(key);
+    this.keys[key] = true;
     this.audio.init();
 
     switch (this.state) {
       case GameState.TITLE:
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (key === 'Enter' || key === ' ') {
           this.audio.menuSelect();
           this.state = GameState.MODE_SELECT;
           this.menuSelection = 0;
@@ -175,14 +259,21 @@ export class PongEngine {
         break;
 
       case GameState.MODE_SELECT:
-        if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'w' || e.key === 'W' || e.key === 's' || e.key === 'S') {
-          this.menuSelection = (this.menuSelection + 1) % 2;
+        if (key === 'ArrowUp' || key === 'w' || key === 'W') {
+          this.menuSelection = (this.menuSelection + MODE_OPTIONS.length - 1) % MODE_OPTIONS.length;
           this.audio.menuSelect();
         }
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (key === 'ArrowDown' || key === 's' || key === 'S') {
+          this.menuSelection = (this.menuSelection + 1) % MODE_OPTIONS.length;
+          this.audio.menuSelect();
+        }
+        if (key === 'Enter' || key === ' ') {
           this.audio.menuSelect();
           this.twoPlayer = this.menuSelection === 1;
-          if (this.twoPlayer) {
+          this.practice = this.menuSelection === 2;
+          if (this.practice) {
+            this.startPractice();
+          } else if (this.twoPlayer) {
             this.paddleLeft.name = 'P1';
             this.paddleRight.name = 'P2';
             this.startCountdown();
@@ -194,7 +285,7 @@ export class PongEngine {
             this.onStateChange?.(this.state);
           }
         }
-        if (e.key === 'Escape') {
+        if (key === 'Escape') {
           this.state = GameState.TITLE;
           this.audio.menuSelect();
           this.onStateChange?.(this.state);
@@ -202,20 +293,20 @@ export class PongEngine {
         break;
 
       case GameState.DIFFICULTY:
-        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+        if (key === 'ArrowUp' || key === 'w' || key === 'W') {
           this.difficultySelection = (this.difficultySelection + 2) % 3;
           this.audio.menuSelect();
         }
-        if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+        if (key === 'ArrowDown' || key === 's' || key === 'S') {
           this.difficultySelection = (this.difficultySelection + 1) % 3;
           this.audio.menuSelect();
         }
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (key === 'Enter' || key === ' ') {
           this.audio.menuSelect();
           this.aiDifficulty = this.difficultySelection;
           this.startCountdown();
         }
-        if (e.key === 'Escape') {
+        if (key === 'Escape') {
           this.state = GameState.MODE_SELECT;
           this.audio.menuSelect();
           this.onStateChange?.(this.state);
@@ -223,25 +314,35 @@ export class PongEngine {
         break;
 
       case GameState.PLAYING:
-        if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
-          this.state = GameState.PAUSED;
-          this.onStateChange?.(this.state);
-        }
+        if (key === 'Escape' || key === 'p' || key === 'P') this.pauseGame();
         break;
 
       case GameState.SERVE:
-        if (e.key === ' ') this.launchServe();
+        if (key === 'Escape' || key === 'p' || key === 'P') this.pauseGame();
+        else if (key === ' ' && (this.twoPlayer || this.serveSide === 'right')) this.launchServe();
         break;
 
       case GameState.PAUSED:
-        if (e.key === 'Escape' || e.key === 'p' || e.key === 'P' || e.key === ' ') {
-          this.state = GameState.PLAYING;
-          this.onStateChange?.(this.state);
+        if (key === 'Escape' || key === 'p' || key === 'P') {
+          this.resumeGame();
+        } else if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'w' || key === 'W' || key === 's' || key === 'S') {
+          this.pauseSelection = (this.pauseSelection + 1) % PAUSE_OPTIONS.length;
+          this.audio.menuSelect();
+        } else if (key === 'Enter' || key === ' ') {
+          this.audio.menuSelect();
+          if (this.pauseSelection === 0) {
+            this.resumeGame();
+          } else {
+            this.practice = false;
+            this.menuSelection = 0;
+            this.state = GameState.MODE_SELECT;
+            this.onStateChange?.(this.state);
+          }
         }
         break;
 
       case GameState.GAME_OVER:
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (key === 'Enter' || key === ' ') {
           this.audio.menuSelect();
           this.state = GameState.MODE_SELECT;
           this.menuSelection = 0;
@@ -251,9 +352,9 @@ export class PongEngine {
     }
   }
 
-  private onKeyUp(e: KeyboardEvent) {
-    const key = e.key.toLowerCase();
-    const side = key === 'c' ? 'right' : key === 'f' && this.twoPlayer ? 'left' : null;
+  releaseKey(key: string) {
+    const lower = key.toLowerCase();
+    const side = lower === 'c' ? 'right' : lower === 'f' && this.twoPlayer ? 'left' : null;
     if (side && this.state === GameState.PLAYING) {
       const charge = side === 'left' ? this.chargeLeft : this.chargeRight;
       const timeToContact = this.getTimeToContact(side);
@@ -265,18 +366,134 @@ export class PongEngine {
           expiresAt: Date.now() + (timeToContact ?? 0) * 1000 + 180,
         };
       }
+      if (this.practice) this.coachPowerRelease(charge, timing);
     }
-    this.keys[e.key] = false;
+    this.keys[key] = false;
   }
 
-  handleClick() {
+  /** A spin stroke is graded by when its button goes down, measured against the same green window. */
+  private recordSpinPress(key: string) {
+    const lower = key.toLowerCase();
+    const spinKey = Object.prototype.hasOwnProperty.call(SPIN_SHOT_KEYS, lower) ? SPIN_SHOT_KEYS[lower] : null;
+    if (!spinKey || this.keys[key] || this.state !== GameState.PLAYING) return;
+    this.spinPress[spinKey.side] = { shot: spinKey.shot, timing: getTimingGrade(this.getTimeToContact(spinKey.side)) };
+  }
+
+  private setLastInput(device: InputDevice) {
+    if (this.lastInput === device) return;
+    this.lastInput = device;
+    this.onInputChange?.(device);
+  }
+
+  private prompt(keyboard: string, gamepad: string, touch: string) {
+    return this.lastInput === 'gamepad' ? gamepad : this.lastInput === 'touch' ? touch : keyboard;
+  }
+
+  private showToast(text: string) {
+    this.toast = { text, until: this.time + 2.5 };
+  }
+
+  private connectedPads() {
+    if (typeof navigator.getGamepads !== 'function') return [];
+    return Array.from(navigator.getGamepads()).filter((pad): pad is Gamepad => Boolean(pad?.connected));
+  }
+
+  private pollGamepads() {
+    const frame = mapGamepads(this.connectedPads(), { state: this.state, twoPlayer: this.twoPlayer, serveSide: this.serveSide });
+    if (frame.keys.size > 0 || frame.axis.left !== 0 || frame.axis.right !== 0) this.setLastInput('gamepad');
+    this.padAxis = frame.axis;
+    const held = this.heldPadKeys;
+    this.heldPadKeys = frame.keys;
+    held.forEach(key => { if (!frame.keys.has(key)) this.releaseKey(key); });
+    frame.keys.forEach(key => { if (!held.has(key)) this.pressKey(key); });
+  }
+
+  private rumble(side: Side, strong: number, weak: number, duration: number) {
+    if (this.lastInput !== 'gamepad') return;
+    this.connectedPads().forEach((pad, index) => {
+      if (padSide(index, this.twoPlayer) !== side) return;
+      try {
+        void pad.vibrationActuator?.playEffect('dual-rumble', { duration, strongMagnitude: strong, weakMagnitude: weak })?.catch(() => undefined);
+      } catch { /* rumble is a bonus; not every controller supports it */ }
+    });
+  }
+
+  private toCanvasPoint(clientX: number, clientY: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: ((clientX - rect.left) / (rect.width || 1)) * W,
+      y: ((clientY - rect.top) / (rect.height || 1)) * H,
+    };
+  }
+
+  private onPointerDown = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    this.setLastInput('touch');
     this.audio.init();
-    if (this.state === GameState.TITLE) {
-      this.audio.menuSelect();
-      this.state = GameState.MODE_SELECT;
-      this.menuSelection = 0;
-      this.onStateChange?.(this.state);
+    if (![GameState.COUNTDOWN, GameState.SERVE, GameState.PLAYING, GameState.GOAL].includes(this.state)) return;
+    const point = this.toCanvasPoint(e.clientX, e.clientY);
+    const side: Side = this.twoPlayer && point.x < W / 2 ? 'left' : 'right';
+    this.touchPointers.set(e.pointerId, side);
+    this.touchTargets[side] = point.y;
+    this.canvas.setPointerCapture?.(e.pointerId);
+  };
+
+  private onPointerMove = (e: PointerEvent) => {
+    const side = this.touchPointers.get(e.pointerId);
+    if (side) this.touchTargets[side] = this.toCanvasPoint(e.clientX, e.clientY).y;
+  };
+
+  private onPointerEnd = (e: PointerEvent) => {
+    const side = this.touchPointers.get(e.pointerId);
+    if (!side) return;
+    this.touchPointers.delete(e.pointerId);
+    if (![...this.touchPointers.values()].includes(side)) this.touchTargets[side] = null;
+  };
+
+  handleClick(clientX: number, clientY: number) {
+    this.audio.init();
+    const { x, y } = this.toCanvasPoint(clientX, clientY);
+    const inRow = (rowY: number, halfWidth: number, halfHeight: number) => Math.abs(x - W / 2) <= halfWidth && Math.abs(y - rowY) <= halfHeight;
+    const goBack = y > H - 60;
+
+    switch (this.state) {
+      case GameState.TITLE:
+      case GameState.GAME_OVER:
+        this.pressKey('Enter');
+        break;
+      case GameState.MODE_SELECT: {
+        if (goBack) { this.pressKey('Escape'); break; }
+        const row = MODE_OPTIONS.findIndex((_, i) => inRow(this.modeRowY(i), 200, 25));
+        if (row >= 0) { this.menuSelection = row; this.pressKey('Enter'); }
+        break;
+      }
+      case GameState.DIFFICULTY: {
+        if (goBack) { this.pressKey('Escape'); break; }
+        const row = AI_NAMES.findIndex((_, i) => inRow(190 + i * 90, 200, 28));
+        if (row >= 0) { this.difficultySelection = row; this.pressKey('Enter'); }
+        break;
+      }
+      case GameState.PAUSED: {
+        const row = PAUSE_OPTIONS.findIndex((_, i) => inRow(this.pauseRowY(i), 170, 19));
+        if (row >= 0) { this.pauseSelection = row; this.pressKey('Enter'); }
+        break;
+      }
     }
+  }
+
+  private modeRowY(index: number) { return 190 + index * 70; }
+  private pauseRowY(index: number) { return H / 2 + 30 + index * 44; }
+
+  private pauseGame() {
+    this.resumeState = this.state;
+    this.pauseSelection = 0;
+    this.state = GameState.PAUSED;
+    this.onStateChange?.(this.state);
+  }
+
+  private resumeGame() {
+    this.state = this.resumeState;
+    this.onStateChange?.(this.state);
   }
 
   // ---- Game flow ----
@@ -285,6 +502,61 @@ export class PongEngine {
     this.countdownTimer = COUNTDOWN_SECS;
     this.state = GameState.COUNTDOWN;
     this.onStateChange?.(this.state);
+  }
+
+  private startPractice() {
+    this.twoPlayer = false;
+    this.paddleLeft.name = 'COACH';
+    this.paddleRight.name = 'YOU';
+    this.resetField();
+    this.practiceStats = { perfects: 0, tries: 0, streak: 0, best: this.practiceStats.best };
+    this.feedPractice(0.5);
+  }
+
+  private feedPractice(wait: number) {
+    this.resetBall();
+    this.paddleLeft.y = 120 + Math.random() * (H - 240 - PADDLE_H);
+    this.paddleLeft.vy = 0;
+    this.serveSide = 'left';
+    this.serveWait = wait;
+    this.state = GameState.SERVE;
+    this.onStateChange?.(this.state);
+  }
+
+  private coachPowerRelease(charge: number, timing: ShotTiming) {
+    const paddle = this.paddleRight;
+    const y = paddle.y - 14;
+    if (charge < 25) {
+      this.addFloatText(paddle.x, y, 'HOLD LONGER', 'rgba(255,255,255,0.75)');
+    } else if (timing === 'none') {
+      this.practiceStats.tries++;
+      this.practiceStats.streak = 0;
+      this.addFloatText(paddle.x, y, 'TOO EARLY', '#ff8a65');
+    } else {
+      this.addFloatText(paddle.x, y, timing.toUpperCase(), timing === 'perfect' ? PERFECT_COLOR : '#ffb020');
+    }
+  }
+
+  private scorePracticeStroke(shot: ShotType, timing: ShotTiming) {
+    if (shot === 'normal') return;
+    const stats = this.practiceStats;
+    stats.tries++;
+    if (timing !== 'perfect') {
+      stats.streak = 0;
+      return;
+    }
+    stats.perfects++;
+    stats.streak++;
+    if (stats.streak > stats.best) {
+      stats.best = stats.streak;
+      try {
+        localStorage.setItem(PRACTICE_BEST_KEY, String(stats.best));
+      } catch { /* ignore */ }
+    }
+  }
+
+  private addFloatText(x: number, y: number, text: string, color: string) {
+    this.floatTexts.push({ x: Math.max(90, Math.min(W - 90, x)), y: Math.max(24, y), text, color, life: 1 });
   }
 
   private resetField() {
@@ -298,6 +570,10 @@ export class PongEngine {
     this.chargeLeft = 0;
     this.chargeRight = 0;
     this.pendingPowerShots = {};
+    this.spinPress = {};
+    this.lastShot = null;
+    this.floatTexts = [];
+    this.hitStop = 0;
     this.playerAimHistory = [];
     this.rallyHits = 0;
     this.longRallyAnnounced = false;
@@ -317,11 +593,14 @@ export class PongEngine {
       vx: Math.cos(angle) * 4.55 * dir,
       vy: Math.sin(angle) * 4.55,
       speed: 4.55, spin: 0, trail: [], lastHitBy: null, frozen: true,
+      shot: 'normal', bounced: false,
     };
     this.extraBalls = [];
   }
 
   private getShotType(side: 'left' | 'right'): ShotType {
+    // The CPU and the practice coach pick their own strokes; left-hand keys only apply to a human P1.
+    if (side === 'left' && !this.twoPlayer) return 'normal';
     const keys = side === 'right'
       ? { topspin: this.keys['v'] || this.keys['V'], slice: this.keys['z'] || this.keys['Z'], stopspin: this.keys['x'] || this.keys['X'] }
       : { topspin: this.keys['e'] || this.keys['E'], slice: this.keys['a'] || this.keys['A'], stopspin: this.keys['d'] || this.keys['D'] };
@@ -392,7 +671,10 @@ export class PongEngine {
       trail: [],
       lastHitBy: side,
       frozen: false,
+      shot,
+      bounced: false,
     };
+    if (this.twoPlayer || side === 'right') this.recordShot(side, shot, 'none', serve.speed, serve.spin);
     this.rallyHits = 0;
     this.longRallyAnnounced = false;
     this.state = GameState.PLAYING;
@@ -428,6 +710,7 @@ export class PongEngine {
       scoreRight: this.scoreRight,
       rallyHits: this.rallyHits,
       playerRead: this.playerReadLabel(),
+      localOnly: this.practice,
     });
   }
 
@@ -442,20 +725,37 @@ export class PongEngine {
 
   // ---- Physics ----
   private handlePaddleInput() {
-    const speed = 420;
-    if (this.keys['ArrowUp']) this.paddleRight.vy = -speed;
-    else if (this.keys['ArrowDown']) this.paddleRight.vy = speed;
-    else this.paddleRight.vy *= 0.85;
-
+    this.movePaddle('right', this.paddleRight, this.keys['ArrowUp'], this.keys['ArrowDown']);
     if (this.twoPlayer) {
-      if (this.keys['w'] || this.keys['W']) this.paddleLeft.vy = -speed;
-      else if (this.keys['s'] || this.keys['S']) this.paddleLeft.vy = speed;
-      else this.paddleLeft.vy *= 0.85;
+      this.movePaddle('left', this.paddleLeft, this.keys['w'] || this.keys['W'], this.keys['s'] || this.keys['S']);
+    }
+  }
+
+  private movePaddle(side: Side, paddle: Paddle, up: boolean, down: boolean) {
+    const target = this.touchTargets[side];
+    const axis = this.padAxis[side];
+    if (target !== null) {
+      const diff = target - (paddle.y + this.getPaddleH(side) / 2);
+      paddle.vy = Math.abs(diff) < 2 ? 0 : Math.max(-PADDLE_SPEED, Math.min(PADDLE_SPEED, diff * 14));
+    } else if (axis !== 0) {
+      paddle.vy = axis * PADDLE_SPEED;
+    } else if (up) {
+      paddle.vy = -PADDLE_SPEED;
+    } else if (down) {
+      paddle.vy = PADDLE_SPEED;
+    } else {
+      paddle.vy *= 0.85;
     }
   }
 
   private updateAI(dt: number) {
     if (this.twoPlayer) return;
+    if (this.practice) {
+      // The coach never misses: it exists to give the player another ball.
+      const diff = this.ball.y - (this.paddleLeft.y + this.getPaddleH('left') / 2);
+      this.paddleLeft.vy = Math.max(-1400, Math.min(1400, diff * 16));
+      return;
+    }
     const aiSpd = AI_SPEEDS[this.aiDifficulty];
     const paddleCenter = this.paddleLeft.y + this.getPaddleH('left') / 2;
     let targetY = this.ball.y;
@@ -507,10 +807,22 @@ export class PongEngine {
     }
     if (!hit) return null;
 
+    if (side === 'left' && this.practice) {
+      const pace = 4.6 + Math.min(this.practiceStats.streak, 10) * 0.12;
+      const feed = calculateShot({
+        side, shot: 'normal', hitOffset: (Math.random() - 0.5) * 1.4, paddleVelocity: 0, incomingVy: b.vy, incomingSpeed: pace,
+      });
+      this.startSwing(paddle, 'normal');
+      return { ...feed, shot: 'normal' as ShotType, timing: 'none' as ShotTiming };
+    }
+
     const hitOffset = ((b.y - (paddle.y + ph / 2)) / (ph / 2));
     const pendingPower = this.getPendingPowerShot(side);
     let shot = this.getShotType(side);
     let timing = pendingPower?.timing ?? 'none';
+    const spinPress = this.spinPress[side];
+    if (shot !== 'power' && spinPress?.shot === shot) timing = spinPress.timing;
+    delete this.spinPress[side];
     if (side === 'left' && !this.twoPlayer && this.aiDifficulty === 2 && this.chargeLeft >= 100 && Math.abs(hitOffset) < 0.36) {
       shot = 'power';
       timing = 'none';
@@ -547,14 +859,14 @@ export class PongEngine {
       b.y = 20 + BALL_R;
       b.vy = Math.abs(b.vy);
       b.spin *= -0.78;
-      this.audio.wallHit();
+      this.onWallBounce(b);
       this.emitParticles(b.x, b.y, '#ffffff', 5, 80, 0.3, 2);
     }
     if (b.y + BALL_R > H - 20) {
       b.y = H - 20 - BALL_R;
       b.vy = -Math.abs(b.vy);
       b.spin *= -0.78;
-      this.audio.wallHit();
+      this.onWallBounce(b);
       this.emitParticles(b.x, b.y, '#ffffff', 5, 80, 0.3, 2);
     }
 
@@ -564,15 +876,13 @@ export class PongEngine {
       b.vx = leftHit.vx; b.vy = leftHit.vy; b.spin = leftHit.spin; b.speed = leftHit.speed;
       b.x = this.paddleLeft.x + PADDLE_W + BALL_R;
       b.lastHitBy = 'left';
+      this.onRacketContact(b, 'left', leftHit);
       this.rallyHits++;
       this.chargeLeft = Math.min(100, this.chargeLeft + (leftHit.speed > 7.4 ? 0 : 18));
       if (this.rallyHits >= 8 && !this.longRallyAnnounced) {
         this.longRallyAnnounced = true;
         this.announce('long-rally', this.twoPlayer ? 'P1' : 'CPU');
       }
-      this.audio.paddleHit();
-      this.emitParticles(b.x, b.y, this.paddleLeft.glowColor, 12, 150, 0.4, 3);
-      this.triggerShake(3);
       if (leftHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P1' : 'CPU', leftHit.shot, leftHit.timing);
     }
     const rightHit = this.ballPaddleCollision(b, this.paddleRight, 'right');
@@ -580,6 +890,7 @@ export class PongEngine {
       b.vx = rightHit.vx; b.vy = rightHit.vy; b.spin = rightHit.spin; b.speed = rightHit.speed;
       b.x = this.paddleRight.x - BALL_R;
       b.lastHitBy = 'right';
+      this.onRacketContact(b, 'right', rightHit);
       this.rallyHits++;
       this.chargeRight = Math.min(100, this.chargeRight + 18);
       if (!this.twoPlayer) this.recordPlayerAim();
@@ -587,18 +898,19 @@ export class PongEngine {
         this.longRallyAnnounced = true;
         this.announce('long-rally', this.twoPlayer ? 'P2' : 'PLAYER');
       }
-      this.audio.paddleHit();
-      this.emitParticles(b.x, b.y, this.paddleRight.glowColor, 12, 150, 0.4, 3);
-      this.triggerShake(3);
       if (rightHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P2' : 'PLAYER', rightHit.shot, rightHit.timing);
     }
 
     // Scoring
     if (b.x < -BALL_R * 2) {
+      if (!isExtra && this.practice) {
+        this.feedPractice(0.35);
+        return false;
+      }
       if (!isExtra) {
         this.scoreRight++;
         this.goalScorer = 'right';
-        this.audio.score();
+        this.audio.score(-0.6);
         this.emitParticles(50, H/2, '#ef4444', 30, 200, 0.8, 4);
         this.triggerShake(8);
         this.onGoal();
@@ -606,10 +918,17 @@ export class PongEngine {
       return false;
     }
     if (b.x > W + BALL_R * 2) {
+      if (!isExtra && this.practice) {
+        this.practiceStats.streak = 0;
+        this.audio.miss(0.6);
+        this.addFloatText(this.paddleRight.x, this.paddleRight.y - 14, 'MISSED', '#ff8a65');
+        this.feedPractice(0.35);
+        return false;
+      }
       if (!isExtra) {
         this.scoreLeft++;
         this.goalScorer = 'left';
-        this.audio.score();
+        this.audio.score(0.6);
         this.emitParticles(W - 50, H/2, '#3b82f6', 30, 200, 0.8, 4);
         this.triggerShake(8);
         this.onGoal();
@@ -622,6 +941,56 @@ export class PongEngine {
     if (b.trail.length > 20) b.trail.shift();
 
     return true;
+  }
+
+  private onWallBounce(b: Ball) {
+    this.audio.wallHit(this.panFor(b.x));
+    if (b.bounced) return;
+    b.bounced = true;
+    const kicked = applyBounceKick(b.vx, b.vy, b.shot);
+    b.vx = kicked.vx;
+    b.vy = kicked.vy;
+  }
+
+  private panFor(x: number) {
+    return (x / W - 0.5) * 1.4;
+  }
+
+  private onRacketContact(b: Ball, side: Side, hit: { speed: number; spin: number; shot: ShotType; timing: ShotTiming }) {
+    const paddle = side === 'left' ? this.paddleLeft : this.paddleRight;
+    const perfect = hit.timing === 'perfect' && hit.shot !== 'normal';
+    b.shot = hit.shot;
+    b.bounced = false;
+    this.audio.shotHit(hit.shot, this.panFor(b.x), hit.speed / BALL_SPEED_MAX, perfect);
+
+    const color = hit.shot === 'normal' ? paddle.glowColor : SHOT_COLORS[hit.shot];
+    this.emitParticles(b.x, b.y, color, 12, 150, 0.4, 3);
+    if (perfect) {
+      this.emitParticles(b.x, b.y, PERFECT_COLOR, 22, 240, 0.55, 4);
+      this.triggerShake(7);
+      this.hitStop = 0.07;
+      this.rumble(side, 0.9, 0.6, 180);
+    } else {
+      this.triggerShake(hit.shot === 'power' ? 5 : 3);
+      this.rumble(side, hit.shot === 'power' ? 0.6 : 0.15, 0.3, 70);
+    }
+
+    if (!this.twoPlayer && side === 'left') return;
+    this.recordShot(side, hit.shot, hit.timing, hit.speed, hit.spin);
+    if (this.practice) this.scorePracticeStroke(hit.shot, hit.timing);
+    if (perfect) this.addFloatText(b.x, b.y - 24, `PERFECT ${SHOT_LABELS[hit.shot]}`, PERFECT_COLOR);
+    else if (hit.shot !== 'normal') this.addFloatText(b.x, b.y - 24, SHOT_LABELS[hit.shot], SHOT_COLORS[hit.shot]);
+  }
+
+  private recordShot(side: Side, shot: ShotType, timing: ShotTiming, speed: number, spin: number) {
+    this.lastShot = {
+      who: side === 'left' ? this.paddleLeft.name : this.paddleRight.name,
+      shot,
+      timing,
+      mph: toMph(speed * this.getBallSpeedMultiplier()),
+      rpm: toRpm(spin),
+      at: this.time,
+    };
   }
 
   private onGoal() {
@@ -703,6 +1072,7 @@ export class PongEngine {
             vx: Math.cos(angle) * spd * dir * (0.8 + Math.random()*0.4),
             vy: Math.sin(angle) * spd,
             speed: spd, spin: this.ball.spin, trail: [], lastHitBy: this.ball.lastHitBy, frozen: false,
+            shot: 'normal', bounced: false,
           });
         }
       } else {
@@ -758,87 +1128,91 @@ export class PongEngine {
   }
 
   private drawCourt() {
-    const ctx = this.ctx;
+    if (!this.courtLayer) this.courtLayer = this.renderCourtLayer();
+    if (this.courtLayer) this.ctx.drawImage(this.courtLayer, 0, 0);
+  }
 
-    // Court surface — subtle green tint in space
-    ctx.fillStyle = 'rgba(0, 60, 30, 0.12)';
-    ctx.fillRect(15, 15, W - 30, H - 30);
+  /** The court never changes, so it is painted once and reused every frame. */
+  private renderCourtLayer() {
+    const layer = document.createElement('canvas');
+    layer.width = W;
+    layer.height = H;
+    const ctx = layer.getContext('2d');
+    if (!ctx) return null;
 
-    // Outer boundary (baselines + sidelines) — white like real tennis
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(15, 15, W - 30, H - 30);
-
-    // Net — center vertical line (thicker, solid, like a real net)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(W / 2, 15);
-    ctx.lineTo(W / 2, H - 15);
-    ctx.stroke();
-
-    // Net cross-hatching for texture
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-    ctx.lineWidth = 0.5;
-    for (let ny = 20; ny < H - 20; ny += 12) {
-      ctx.beginPath();
-      ctx.moveTo(W / 2 - 4, ny);
-      ctx.lineTo(W / 2 + 4, ny);
-      ctx.stroke();
+    // Run-off and playing surface, with a fine grain so it reads as acrylic hard court.
+    ctx.fillStyle = COURT.runoff;
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = COURT.surface;
+    ctx.fillRect(COURT.baselineX, COURT.sidelineY, W - COURT.baselineX * 2, H - COURT.sidelineY * 2);
+    for (let i = 0; i < 9000; i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.05)';
+      ctx.fillRect(Math.random() * W, Math.random() * H, 1.5, 1.5);
     }
 
-    // Net post markers (top and bottom)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.fillRect(W / 2 - 3, 12, 6, 6);
-    ctx.fillRect(W / 2 - 3, H - 18, 6, 6);
+    const left = COURT.baselineX, right = W - COURT.baselineX;
+    const top = COURT.sidelineY, bottom = H - COURT.sidelineY;
+    const singlesTop = top + (bottom - top) * (4.5 / 36);
+    const singlesBottom = bottom - (bottom - top) * (4.5 / 36);
+    const serviceOffset = (W / 2 - left) * (21 / 39);
+    const line = (x1: number, y1: number, x2: number, y2: number, width: number) => {
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    };
 
-    // Service line left
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(W * 0.3, 15);
-    ctx.lineTo(W * 0.3, H - 15);
-    ctx.stroke();
+    ctx.strokeStyle = COURT.line;
+    // Baselines, doubles sidelines and singles sidelines.
+    line(left, top, left, bottom, 5);
+    line(right, top, right, bottom, 5);
+    line(left, top, right, top, 3);
+    line(left, bottom, right, bottom, 3);
+    line(left, singlesTop, right, singlesTop, 3);
+    line(left, singlesBottom, right, singlesBottom, 3);
+    // Service lines, centre service line and baseline centre marks.
+    line(W / 2 - serviceOffset, singlesTop, W / 2 - serviceOffset, singlesBottom, 3);
+    line(W / 2 + serviceOffset, singlesTop, W / 2 + serviceOffset, singlesBottom, 3);
+    line(W / 2 - serviceOffset, H / 2, W / 2 + serviceOffset, H / 2, 3);
+    line(left, H / 2, left + 12, H / 2, 3);
+    line(right, H / 2, right - 12, H / 2, 3);
 
-    // Service line right
-    ctx.beginPath();
-    ctx.moveTo(W * 0.7, 15);
-    ctx.lineTo(W * 0.7, H - 15);
-    ctx.stroke();
+    // Net: cast shadow, mesh, white tape, and posts just outside the doubles lines.
+    const netTop = top - 8, netBottom = bottom + 8;
+    ctx.fillStyle = 'rgba(0,0,0,0.26)';
+    ctx.fillRect(W / 2 + 3, netTop, 9, netBottom - netTop);
+    ctx.fillStyle = 'rgba(8,14,22,0.55)';
+    ctx.fillRect(W / 2 - 5, netTop, 10, netBottom - netTop);
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    for (let y = netTop; y < netBottom; y += 5) line(W / 2 - 5, y, W / 2 + 5, y, 0.7);
+    for (let x = W / 2 - 5; x <= W / 2 + 5; x += 5) line(x, netTop, x, netBottom, 0.7);
+    ctx.strokeStyle = '#ffffff';
+    line(W / 2, netTop, W / 2, netBottom, 2.5);
+    ctx.fillStyle = '#20262e';
+    ctx.fillRect(W / 2 - 5, netTop - 6, 10, 8);
+    ctx.fillRect(W / 2 - 5, netBottom - 2, 10, 8);
+    ctx.fillStyle = '#e8edf2';
+    ctx.fillRect(W / 2 - 3, netTop - 4, 6, 4);
+    ctx.fillRect(W / 2 - 3, netBottom, 6, 4);
 
-    // Center service line (horizontal through middle of each service box)
-    ctx.beginPath();
-    ctx.moveTo(W * 0.3, H / 2);
-    ctx.lineTo(W / 2, H / 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(W / 2, H / 2);
-    ctx.lineTo(W * 0.7, H / 2);
-    ctx.stroke();
+    return layer;
+  }
 
-    // Center marks on baselines (small tick marks)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(15, H / 2 - 8);
-    ctx.lineTo(15, H / 2 + 8);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(W - 15, H / 2 - 8);
-    ctx.lineTo(W - 15, H / 2 + 8);
-    ctx.stroke();
+  private dimCourt() {
+    this.ctx.fillStyle = 'rgba(4, 8, 18, 0.68)';
+    this.ctx.fillRect(0, 0, W, H);
+  }
 
-    // Doubles tramlines (inner sidelines)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(15, 45);
-    ctx.lineTo(W - 15, 45);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(15, H - 45);
-    ctx.lineTo(W - 15, H - 45);
-    ctx.stroke();
+  /** Dark backing so HUD text stays legible on the bright court colours. */
+  private drawPlate(x: number, y: number, width: number, height: number) {
+    this.ctx.fillStyle = 'rgba(5, 10, 20, 0.78)';
+    this.ctx.fillRect(x, y, width, height);
+  }
+
+  private drawTextPlate(text: string, centerX: number, baselineY: number, size: number) {
+    const width = this.ctx.measureText(text).width + 16;
+    this.drawPlate(centerX - width / 2, baselineY - size - 4, width, size + 9);
   }
 
   private drawPaddle(paddle: Paddle, h: number) {
@@ -951,7 +1325,12 @@ export class PongEngine {
     const tennisBallColor = color === '#fff' ? '#CCFF00' : color;
     const tennisGlow = glow === '#ffffff' ? '#AADD00' : glow;
 
-    ctx.shadowBlur = 25;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(b.x + 3, b.y + 4, BALL_R, BALL_R * 0.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 12;
     ctx.shadowColor = tennisGlow;
     ctx.fillStyle = tennisBallColor;
     ctx.beginPath();
@@ -980,7 +1359,101 @@ export class PongEngine {
     ctx.fillRect(-3, -4, 2, 2);
     ctx.restore();
 
+    // Motion arcs turn the way the ball is spinning and grow with the amount of spin.
+    const spinAmount = Math.min(1, Math.abs(b.spin));
+    if (spinAmount > 0.12) {
+      const spinAngle = this.time * Math.sign(b.spin) * (4 + spinAmount * 10);
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.25 + spinAmount * 0.6;
+      ctx.strokeStyle = SHOT_COLORS[b.shot];
+      ctx.lineWidth = 1.5;
+      for (const offset of [0, Math.PI]) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, BALL_R + 5, spinAngle + offset, spinAngle + offset + 0.5 + spinAmount * 1.3);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     ctx.shadowBlur = 0;
+  }
+
+  /** Practice cue: the ball wears a lime ring for exactly as long as the green window is open. */
+  private drawPracticeCue() {
+    if (getTimingGrade(this.getTimeToContact('right')) !== 'perfect') return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.strokeStyle = PERFECT_COLOR;
+    ctx.lineWidth = 2.5;
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = PERFECT_COLOR;
+    ctx.beginPath();
+    ctx.arc(this.ball.x, this.ball.y, BALL_R + 9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private drawShotReadout() {
+    const shot = this.lastShot;
+    if (!shot) return;
+    const age = this.time - shot.at;
+    if (age > 4) return;
+    const ctx = this.ctx;
+    const grade = shot.timing === 'none' || shot.shot === 'normal' ? '' : `  ${shot.timing.toUpperCase()}`;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (4 - age) / 1.2);
+    ctx.textAlign = 'center';
+    ctx.font = '7px "Press Start 2P", monospace';
+    const readout = `${shot.who} ${SHOT_LABELS[shot.shot]}  ${shot.mph} MPH  ${shot.rpm} RPM${grade}`;
+    this.drawTextPlate(readout, READOUT_X, H - 34, 7);
+    ctx.fillStyle = shot.timing === 'perfect' && shot.shot !== 'normal' ? PERFECT_COLOR : SHOT_COLORS[shot.shot];
+    ctx.fillText(readout, READOUT_X, H - 34);
+    ctx.restore();
+  }
+
+  private drawPracticeHud() {
+    const ctx = this.ctx;
+    const stats = this.practiceStats;
+    this.drawScoreDisplay(stats.perfects, W / 2 - 92, 35, PERFECT_COLOR, PERFECT_COLOR);
+    this.drawScoreDisplay(stats.tries, W / 2 + 50, 35, '#f5f5f0', '#9ca3af');
+    ctx.font = '8px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('PERFECT', W / 2 - 50, 28);
+    ctx.fillText('TRIES', W / 2 + 82, 28);
+    const streakText = `STREAK ${stats.streak}   BEST ${stats.best}`;
+    this.drawTextPlate(streakText, W / 2, H - 6, 8);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText(streakText, W / 2, H - 6);
+    ctx.font = '7px "Press Start 2P", monospace';
+    const hint = this.prompt(
+      'TAP V/Z/X INSIDE THE RING, OR HOLD C AND RELEASE',
+      'TAP Y/B/X INSIDE THE RING, OR HOLD RT AND RELEASE',
+      'TAP A SHOT INSIDE THE RING, OR HOLD POWER AND RELEASE',
+    );
+    this.drawTextPlate(hint, 330, 124, 7);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillText(hint, 330, 124);
+  }
+
+  private drawOverlays() {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '10px "Press Start 2P", monospace';
+    for (const text of this.floatTexts) {
+      ctx.globalAlpha = Math.min(1, text.life * 1.6);
+      ctx.fillStyle = text.color;
+      ctx.fillText(text.text, text.x, text.y);
+    }
+    if (this.toast && this.time < this.toast.until) {
+      ctx.globalAlpha = Math.min(1, (this.toast.until - this.time) * 2);
+      ctx.fillStyle = PERFECT_COLOR;
+      ctx.font = '9px "Press Start 2P", monospace';
+      ctx.fillText(this.toast.text, W / 2, H - 84);
+    }
+    ctx.restore();
   }
 
   private drawDigit(x: number, y: number, digit: number, scale: number, color: string, glow: string) {
@@ -1038,22 +1511,30 @@ export class PongEngine {
 
   private drawHUD() {
     const ctx = this.ctx;
-    this.drawScoreDisplay(this.scoreLeft, W/2 - 120, 35, '#f87171', '#ef4444');
+    this.drawPlate(W / 2 - 96, 14, 240, 94);
+    this.drawPlate(W - 356, H - 70, 248, 48);
+    this.drawShotReadout();
+    if (this.practice) {
+      this.drawPracticeHud();
+    } else {
+    this.drawScoreDisplay(this.scoreLeft, W/2 - 92, 35, '#f87171', '#ef4444');
     this.drawScoreDisplay(this.scoreRight, W/2 + 50, 35, '#60a5fa', '#3b82f6');
 
     ctx.font = '10px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = this.paddleLeft.glowColor;
     ctx.globalAlpha = 0.6;
-    ctx.fillText(this.paddleLeft.name, W/2 - 90, 28);
+    ctx.fillText(this.paddleLeft.name, W/2 - 50, 28);
     ctx.fillStyle = this.paddleRight.glowColor;
     ctx.fillText(this.paddleRight.name, W/2 + 82, 28);
     ctx.globalAlpha = 1;
 
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.font = '8px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`FIRST TO ${WIN_SCORE}`, W/2, H - 8);
+    this.drawTextPlate(`FIRST TO ${WIN_SCORE}`, W / 2, H - 6, 8);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText(`FIRST TO ${WIN_SCORE}`, W/2, H - 6);
+    }
 
     const timingSide = this.twoPlayer && this.ball.vx < 0 ? 'left' : 'right';
     const charge = timingSide === 'left' ? this.chargeLeft : this.chargeRight;
@@ -1064,20 +1545,20 @@ export class PongEngine {
     const timing = this.getPendingPowerShot(timingSide)?.timing ?? getTimingGrade(timeToContact);
     const timingProgress = getTimingProgress(timeToContact);
     const showTiming = isHolding || (timeToContact !== null && timeToContact <= 0.55) || Boolean(this.getPendingPowerShot(timingSide));
-    const barX = W - 142;
+    const barX = W - 230;
     const barWidth = 112;
 
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(255,255,255,0.52)';
     ctx.font = '7px "Press Start 2P", monospace';
     const timingPlayer = timingSide === 'right' ? (this.twoPlayer ? 'P2' : 'P1') : (this.twoPlayer ? 'P1' : 'CPU');
-    ctx.fillText(`${timingPlayer} CHARGE`, W - 150, H - 57);
+    ctx.fillText(`${timingPlayer} CHARGE`, W - 238, H - 47);
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(barX, H - 54, barWidth, 7);
+    ctx.fillRect(barX, H - 56, barWidth, 7);
     ctx.fillStyle = charge >= 95 ? '#d7fa59' : '#60a5fa';
     ctx.shadowBlur = charge >= 95 ? 10 : 0;
     ctx.shadowColor = '#d7fa59';
-    ctx.fillRect(barX, H - 54, barWidth * (charge / 100), 7);
+    ctx.fillRect(barX, H - 56, barWidth * (charge / 100), 7);
     ctx.shadowBlur = 0;
 
     if (showTiming) {
@@ -1087,7 +1568,7 @@ export class PongEngine {
       const timingLabel = this.getPendingPowerShot(timingSide)
         ? `${timing.toUpperCase()} LOCKED`
         : isHolding && timing === 'perfect' ? 'RELEASE NOW' : isHolding && timeToContact === null ? 'WAIT FOR BALL' : isHolding && timing === 'late' ? 'TOO LATE' : 'WATCH TIMING';
-      ctx.fillText(timingLabel, W - 150, H - 40);
+      ctx.fillText(timingLabel, W - 238, H - 32);
       ctx.fillStyle = 'rgba(255,255,255,0.12)';
       ctx.fillRect(barX, H - 35, barWidth, 6);
       ctx.fillStyle = 'rgba(215,250,89,0.55)';
@@ -1179,7 +1660,7 @@ export class PongEngine {
       ctx.globalAlpha = 0.8;
       ctx.font = '9px "Press Start 2P", monospace';
       ctx.textAlign = 'left';
-      ctx.fillText(`${p.label} ${remaining.toFixed(1)}s`, x, H - 35 + yOff);
+      ctx.fillText(`${p.label} ${remaining.toFixed(1)}s`, x, H - 80 + yOff);
       ctx.globalAlpha = 1;
       yOff -= 14;
     }
@@ -1254,7 +1735,7 @@ export class PongEngine {
     if (Math.sin(t * 3) > 0) {
       ctx.fillStyle = '#fff';
       ctx.font = '13px "Press Start 2P", monospace';
-      ctx.fillText('PRESS ENTER OR CLICK TO START', W/2, H/2 + 160);
+      ctx.fillText(this.prompt('PRESS ENTER OR CLICK TO START', 'PRESS A TO START', 'TAP TO START'), W/2, H/2 + 160);
     }
 
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
@@ -1266,6 +1747,7 @@ export class PongEngine {
   private drawModeSelect() {
     this.drawBackground();
     this.drawCourt();
+    this.dimCourt();
     const ctx = this.ctx;
     const t = this.time;
 
@@ -1276,10 +1758,9 @@ export class PongEngine {
     ctx.fillText('SELECT MODE', W/2, 100);
     ctx.shadowBlur = 0;
 
-    const options = ['1 PLAYER  vs  CPU', '2 PLAYERS  LOCAL'];
-    options.forEach((opt, i) => {
+    MODE_OPTIONS.forEach((opt, i) => {
       const selected = this.menuSelection === i;
-      const y = 220 + i * 80;
+      const y = this.modeRowY(i);
 
       if (selected) {
         ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
@@ -1301,19 +1782,20 @@ export class PongEngine {
 
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.font = '9px "Press Start 2P", monospace';
-    ctx.fillText('UP/DOWN TO SELECT  -  ENTER TO CONFIRM', W/2, H - 50);
-    ctx.fillText('ESC TO GO BACK', W/2, H - 30);
+    ctx.fillText(this.prompt('UP/DOWN TO SELECT  -  ENTER TO CONFIRM', 'STICK TO SELECT  -  A TO CONFIRM', 'TAP AN OPTION'), W/2, H - 50);
+    ctx.fillText(this.prompt('ESC TO GO BACK', 'B TO GO BACK', 'TAP HERE TO GO BACK'), W/2, H - 30);
 
     if (this.winStreak > 0) {
       ctx.fillStyle = '#FFD700';
       ctx.font = '10px "Press Start 2P", monospace';
-      ctx.fillText(`WIN STREAK: ${this.winStreak}`, W/2, H - 80);
+      ctx.fillText(`WIN STREAK: ${this.winStreak}`, W/2, H - 74);
     }
   }
 
   private drawDifficultySelect() {
     this.drawBackground();
     this.drawCourt();
+    this.dimCourt();
     const ctx = this.ctx;
     const t = this.time;
 
@@ -1357,8 +1839,8 @@ export class PongEngine {
 
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.font = '9px "Press Start 2P", monospace';
-    ctx.fillText('UP/DOWN TO SELECT  -  ENTER TO CONFIRM', W/2, H - 50);
-    ctx.fillText('ESC TO GO BACK', W/2, H - 30);
+    ctx.fillText(this.prompt('UP/DOWN TO SELECT  -  ENTER TO CONFIRM', 'STICK TO SELECT  -  A TO CONFIRM', 'TAP AN OPTION'), W/2, H - 50);
+    ctx.fillText(this.prompt('ESC TO GO BACK', 'B TO GO BACK', 'TAP HERE TO GO BACK'), W/2, H - 30);
   }
 
   private drawCountdownScreen() {
@@ -1396,10 +1878,12 @@ export class PongEngine {
     this.drawPaddle(this.paddleRight, this.getPaddleH('right'));
     this.drawHUD();
     const ctx = this.ctx;
-    const server = this.serveSide === 'right'
+    const autoServe = !this.twoPlayer && this.serveSide === 'left';
+    const server = this.practice ? 'COACH' : this.serveSide === 'right'
       ? (this.twoPlayer ? 'P2' : 'PLAYER')
       : (this.twoPlayer ? 'P1' : 'CPU');
     ctx.textAlign = 'center';
+    this.drawPlate(W / 2 - 230, H / 2 - 66, 460, 124);
     ctx.fillStyle = '#d7fa59';
     ctx.shadowBlur = 18;
     ctx.shadowColor = '#d7fa59';
@@ -1408,11 +1892,11 @@ export class PongEngine {
     ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
     ctx.font = '10px "Press Start 2P", monospace';
-    ctx.fillText(server === 'CPU' ? 'CPU IS LINING IT UP…' : 'PRESS SPACE TO SERVE', W / 2, H / 2 + 18);
-    if (server !== 'CPU') {
+    ctx.fillText(autoServe ? `${server} IS LINING IT UP…` : this.prompt('PRESS SPACE TO SERVE', 'PRESS A TO SERVE', 'TAP SERVE'), W / 2, H / 2 + 18);
+    if (!autoServe) {
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
       ctx.font = '8px "Press Start 2P", monospace';
-      ctx.fillText('MOVE YOUR PADDLE TO AIM', W / 2, H / 2 + 44);
+      ctx.fillText(this.prompt('MOVE YOUR PADDLE TO AIM', 'MOVE YOUR PADDLE TO AIM', 'DRAG ON THE COURT TO AIM'), W / 2, H / 2 + 44);
     }
   }
 
@@ -1429,6 +1913,7 @@ export class PongEngine {
   private drawGameOver() {
     this.drawBackground();
     this.drawCourt();
+    this.dimCourt();
     this.drawHUD();
     const ctx = this.ctx;
     const t = this.time;
@@ -1481,7 +1966,7 @@ export class PongEngine {
     if (Math.sin(t * 3) > 0) {
       ctx.fillStyle = '#fff';
       ctx.font = '11px "Press Start 2P", monospace';
-      ctx.fillText('PRESS ENTER TO CONTINUE', W/2, H - 40);
+      ctx.fillText(this.prompt('PRESS ENTER TO CONTINUE', 'PRESS A TO CONTINUE', 'TAP TO CONTINUE'), W/2, H - 40);
     }
   }
 
@@ -1496,21 +1981,26 @@ export class PongEngine {
     ctx.shadowBlur = 20; ctx.shadowColor = '#3b82f6';
     ctx.font = '36px Orbitron, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('PAUSED', W/2, H/2 - 20);
+    ctx.fillText('PAUSED', W/2, H/2 - 40);
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
 
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = '10px "Press Start 2P", monospace';
-    ctx.fillText('PRESS ESC OR P TO RESUME', W/2, H/2 + 30);
+    PAUSE_OPTIONS.forEach((option, i) => {
+      const selected = this.pauseSelection === i;
+      const y = this.pauseRowY(i);
+      if (selected) {
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(W/2 - 170, y - 19, 340, 38);
+      }
+      ctx.fillStyle = selected ? '#fff' : 'rgba(255,255,255,0.45)';
+      ctx.font = '12px "Press Start 2P", monospace';
+      ctx.fillText(option, W/2, y + 6);
+    });
 
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '9px "Press Start 2P", monospace';
-    if (this.twoPlayer) {
-      ctx.fillText('P1: W / S    P2: UP / DOWN', W/2, H/2 + 70);
-    } else {
-      ctx.fillText('CONTROLS: UP / DOWN ARROWS', W/2, H/2 + 70);
-    }
+    ctx.fillText(this.prompt('ESC OR P TO RESUME', 'START TO RESUME', 'TAP AN OPTION'), W/2, H/2 + 145);
   }
 
   // ---- Main Loop ----
@@ -1518,6 +2008,15 @@ export class PongEngine {
     const dt = Math.min((now - this.lastTime) / 1000, 0.05);
     this.lastTime = now;
     this.time += dt;
+
+    this.pollGamepads();
+
+    for (let i = this.floatTexts.length - 1; i >= 0; i--) {
+      const text = this.floatTexts[i];
+      text.y -= 26 * dt;
+      text.life -= dt / 0.9;
+      if (text.life <= 0) this.floatTexts.splice(i, 1);
+    }
 
     // Update shake
     if (this.shakeMag > 0.5) {
@@ -1588,48 +2087,18 @@ export class PongEngine {
         break;
 
       case GameState.PLAYING:
-        this.handlePaddleInput();
-        this.updateShotCharge(dt);
-        this.updateAI(dt);
-        this.updatePaddles(dt);
-        this.updateBall(this.ball, dt, false);
-
-        for (let i = this.extraBalls.length - 1; i >= 0; i--) {
-          if (!this.updateBall(this.extraBalls[i], dt, true)) {
-            this.extraBalls.splice(i, 1);
-          }
-        }
-
-        this.goldBallTimer -= dt;
-        if (this.goldBallTimer <= 0 && !this.goldBall) {
-          this.goldBall = {
-            x: W * 0.25 + Math.random() * W * 0.5,
-            y: 60 + Math.random() * (H - 120),
-          };
-        }
-        this.checkGoldBall();
-
-        this.powerUpTimer -= dt;
-        if (this.powerUpTimer <= 0 && !this.powerUp) {
-          const typeDef = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-          this.powerUp = {
-            x: W * 0.3 + Math.random() * W * 0.4,
-            y: 80 + Math.random() * (H - 160),
-            typeDef,
-          };
-        }
-        this.checkPowerUp();
-
-        this.activePowerUps = this.activePowerUps.filter(p => Date.now() < p.endTime);
+        if (this.hitStop > 0) this.hitStop -= dt;
+        else this.simulateRally(dt);
 
         this.drawBackground();
         this.drawCourt();
         this.drawPaddle(this.paddleLeft, this.getPaddleH('left'));
         this.drawPaddle(this.paddleRight, this.getPaddleH('right'));
-        this.drawBallTrail(this.ball, '#CCFF00');
+        this.drawBallTrail(this.ball, SHOT_COLORS[this.ball.shot]);
         for (const eb of this.extraBalls) this.drawBallTrail(eb, 'rgba(200,255,0,0.7)');
         this.drawBallObj(this.ball, '#fff', '#ffffff');
         for (const eb of this.extraBalls) this.drawBallObj(eb, '#ff88ff', '#ff44ff');
+        if (this.practice) this.drawPracticeCue();
         this.drawGoldBall();
         this.drawPowerUp();
         this.drawActivePowerUps();
@@ -1669,7 +2138,7 @@ export class PongEngine {
         this.drawCourt();
         this.drawPaddle(this.paddleLeft, this.getPaddleH('left'));
         this.drawPaddle(this.paddleRight, this.getPaddleH('right'));
-        this.drawBallObj(this.ball, '#fff', '#ffffff');
+        if (this.resumeState === GameState.PLAYING) this.drawBallObj(this.ball, '#fff', '#ffffff');
         this.drawGoldBall();
         this.drawPowerUp();
         this.drawHUD();
@@ -1677,8 +2146,47 @@ export class PongEngine {
         break;
     }
 
+    this.drawOverlays();
     ctx.restore();
 
     this.animId = requestAnimationFrame(this.loop);
   };
+
+  private simulateRally(dt: number) {
+    this.handlePaddleInput();
+    this.updateShotCharge(dt);
+    this.updateAI(dt);
+    this.updatePaddles(dt);
+    this.updateBall(this.ball, dt, false);
+
+    for (let i = this.extraBalls.length - 1; i >= 0; i--) {
+      if (!this.updateBall(this.extraBalls[i], dt, true)) {
+        this.extraBalls.splice(i, 1);
+      }
+    }
+
+    if (this.practice) return;
+
+    this.goldBallTimer -= dt;
+    if (this.goldBallTimer <= 0 && !this.goldBall) {
+      this.goldBall = {
+        x: W * 0.25 + Math.random() * W * 0.5,
+        y: 60 + Math.random() * (H - 120),
+      };
+    }
+    this.checkGoldBall();
+
+    this.powerUpTimer -= dt;
+    if (this.powerUpTimer <= 0 && !this.powerUp) {
+      const typeDef = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+      this.powerUp = {
+        x: W * 0.3 + Math.random() * W * 0.4,
+        y: 80 + Math.random() * (H - 160),
+        typeDef,
+      };
+    }
+    this.checkPowerUp();
+
+    this.activePowerUps = this.activePowerUps.filter(p => Date.now() < p.endTime);
+  }
 }

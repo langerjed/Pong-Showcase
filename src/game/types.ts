@@ -1,5 +1,5 @@
 // ============================================================
-//  JEDAI Space Pong — Type Definitions
+//  Pong Showcase — Type Definitions
 // ============================================================
 
 export enum GameState {
@@ -36,6 +36,9 @@ export interface Ball {
   trail: { x: number; y: number }[];
   lastHitBy: 'left' | 'right' | null;
   frozen: boolean;
+  /** Stroke that last sent the ball, used for colour and the bounce kick. */
+  shot: ShotType;
+  bounced: boolean;
 }
 
 export type ShotType = 'normal' | 'topspin' | 'slice' | 'stopspin' | 'power';
@@ -50,6 +53,8 @@ export interface AnnouncerEvent {
   scoreRight: number;
   rallyHits: number;
   playerRead: string;
+  /** Practice calls stay on the device and never reach the optional AI announcer. */
+  localOnly?: boolean;
 }
 
 export interface GoldBall {

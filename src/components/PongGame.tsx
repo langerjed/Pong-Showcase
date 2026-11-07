@@ -1,9 +1,21 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import type { MouseEvent, PointerEvent } from 'react';
 import { PongEngine } from '@/game/engine';
 import { fallbackCommentary } from '@/game/announcer';
+import { GameState } from '@/game/types';
 import type { AnnouncerEvent } from '@/game/types';
+import { SIDE_KEYS } from '@/game/input';
+import type { InputDevice, Side } from '@/game/input';
+
+const LIVE_STATES = [GameState.COUNTDOWN, GameState.SERVE, GameState.PLAYING, GameState.GOAL, GameState.PAUSED];
+const TOUCH_SHOTS = [
+  { action: 'topspin', label: 'TOPSPIN' },
+  { action: 'slice', label: 'SLICE' },
+  { action: 'stopspin', label: 'STOP' },
+  { action: 'power', label: 'HOLD POWER' },
+] as const;
 
 export default function PongGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -15,6 +27,10 @@ export default function PongGame() {
   const [commentary, setCommentary] = useState('Pick a mode and step onto the court.');
   const [aiEnabled, setAiEnabled] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [inputDevice, setInputDevice] = useState<InputDevice>(() => (window.matchMedia?.('(pointer: coarse)').matches ? 'touch' : 'keyboard'));
+  const [touchSeen, setTouchSeen] = useState(inputDevice === 'touch');
+  const [gameState, setGameState] = useState<GameState>(GameState.TITLE);
+  const [twoPlayer, setTwoPlayer] = useState(false);
 
   const speak = useCallback((line: string) => {
     if (!voiceEnabledRef.current || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -35,12 +51,20 @@ export default function PongGame() {
 
     const engine = new PongEngine(canvas);
     engineRef.current = engine;
+    engine.onInputChange = device => {
+      setInputDevice(device);
+      if (device === 'touch') setTouchSeen(true);
+    };
+    engine.onStateChange = state => {
+      setGameState(state);
+      setTwoPlayer(engine.twoPlayer);
+    };
     engine.onAnnouncer = (event: AnnouncerEvent) => {
       const localLine = fallbackCommentary(event);
       setCommentary(localLine);
       speak(localLine);
 
-      if (!aiAnnouncerRef.current || Date.now() - lastAiCallRef.current < 2800) return;
+      if (event.localOnly || !aiAnnouncerRef.current || Date.now() - lastAiCallRef.current < 2800) return;
       lastAiCallRef.current = Date.now();
       const requestId = ++requestIdRef.current;
       void fetch('/api/announcer', {
@@ -73,12 +97,26 @@ export default function PongGame() {
     };
   }, [speak]);
 
-  const handleClick = useCallback(() => {
-    engineRef.current?.handleClick();
+  const handleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    engineRef.current?.handleClick(event.clientX, event.clientY);
   }, []);
 
+  const holdButton = (key: string) => ({
+    onPointerDown: (event: PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      engineRef.current?.pressKey(key);
+    },
+    onPointerUp: () => engineRef.current?.releaseKey(key),
+    onPointerCancel: () => engineRef.current?.releaseKey(key),
+    onContextMenu: (event: MouseEvent) => event.preventDefault(),
+  });
+
+  const touchSides: Side[] = twoPlayer ? ['left', 'right'] : ['right'];
+
   return (
-    <div className="game-wrapper" onClick={handleClick}>
+    <>
+    <div className={`game-wrapper${LIVE_STATES.includes(gameState) ? ' is-live' : ''}`} data-input={inputDevice} onClick={handleClick}>
       <canvas
         ref={canvasRef}
         id="pong"
@@ -107,5 +145,27 @@ export default function PongGame() {
       <div className="crt-vignette" />
       <div className="crt-bezel" />
     </div>
+    {touchSeen && (
+      <div className="touch-pad" aria-label="Touch controls">
+        <div className="touch-utility">
+          <button type="button" className={`touch-btn touch-serve${gameState === GameState.SERVE ? ' is-ready' : ''}`} {...holdButton(' ')}>SERVE</button>
+          <span className="touch-tip">{twoPlayer ? 'DRAG YOUR HALF OF THE COURT TO MOVE' : 'DRAG ON THE COURT TO MOVE'}</span>
+          <button type="button" className="touch-btn" {...holdButton('Escape')}>PAUSE</button>
+        </div>
+        <div className="touch-sides">
+          {touchSides.map(side => (
+            <div className="touch-cluster" key={side}>
+              {twoPlayer && <span className="touch-player">{side === 'left' ? 'P1' : 'P2'}</span>}
+              {TOUCH_SHOTS.map(shot => (
+                <button type="button" key={shot.action} className={`touch-btn touch-shot touch-${shot.action}`} {...holdButton(SIDE_KEYS[side][shot.action])}>
+                  {shot.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
