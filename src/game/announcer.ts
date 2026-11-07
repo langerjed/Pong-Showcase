@@ -17,6 +17,7 @@ export function fallbackCommentary(event: AnnouncerEvent) {
     ], seed);
   }
   if (event.kind === 'long-rally') return `${event.rallyHits} hits and counting—neither player is giving an inch.`;
+  if (event.shot === 'topspin') return `${event.shooter} brushes up the back of the ball—heavy topspin pulls it down into court.`;
   if (event.shot === 'slice') return `${event.shooter} carves a slice across the court.`;
   if (event.shot === 'stopspin') return `${event.shooter} takes the pace off. That's a stop-spin return.`;
   if (event.shot === 'power' && event.timing === 'perfect') return `Perfect timing! ${event.shooter} unloads a laser-guided power shot.`;

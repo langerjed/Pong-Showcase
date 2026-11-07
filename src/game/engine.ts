@@ -69,10 +69,12 @@ export class PongEngine {
   private paddleLeft: Paddle = {
     x: 30, y: H / 2 - PADDLE_H / 2, vy: 0,
     color1: '#ef4444', color2: '#f87171', glowColor: '#ef4444', name: 'CPU',
+    swingShot: 'normal', swingTimer: 0,
   };
   private paddleRight: Paddle = {
     x: W - 30 - PADDLE_W, y: H / 2 - PADDLE_H / 2, vy: 0,
     color1: '#3b82f6', color2: '#60a5fa', glowColor: '#3b82f6', name: 'P1',
+    swingShot: 'normal', swingTimer: 0,
   };
 
   // Ball
@@ -321,12 +323,18 @@ export class PongEngine {
 
   private getShotType(side: 'left' | 'right'): ShotType {
     const keys = side === 'right'
-      ? { slice: this.keys['z'] || this.keys['Z'], stopspin: this.keys['x'] || this.keys['X'] }
-      : { slice: this.keys['a'] || this.keys['A'], stopspin: this.keys['d'] || this.keys['D'] };
+      ? { topspin: this.keys['v'] || this.keys['V'], slice: this.keys['z'] || this.keys['Z'], stopspin: this.keys['x'] || this.keys['X'] }
+      : { topspin: this.keys['e'] || this.keys['E'], slice: this.keys['a'] || this.keys['A'], stopspin: this.keys['d'] || this.keys['D'] };
     if (this.getPendingPowerShot(side)) return 'power';
     if (keys.stopspin) return 'stopspin';
     if (keys.slice) return 'slice';
+    if (keys.topspin) return 'topspin';
     return 'normal';
+  }
+
+  private startSwing(paddle: Paddle, shot: ShotType) {
+    paddle.swingShot = shot;
+    paddle.swingTimer = 0.38;
   }
 
   private getPendingPowerShot(side: 'left' | 'right') {
@@ -375,6 +383,7 @@ export class PongEngine {
     const paddleCenter = paddle.y + this.getPaddleH(side) / 2;
     const shot = this.getShotType(side);
     const serve = calculateServe(side, (paddleCenter - H / 2) / (H / 2), shot);
+    this.startSwing(paddle, shot);
     this.spendPower(side, shot);
     this.ball = {
       x: side === 'left' ? paddle.x + PADDLE_W + BALL_R : paddle.x - BALL_R,
@@ -482,6 +491,7 @@ export class PongEngine {
       const ph = this.getPaddleH(side);
       paddle.y += paddle.vy * dt;
       paddle.y = Math.max(20, Math.min(H - 20 - ph, paddle.y));
+      paddle.swingTimer = Math.max(0, paddle.swingTimer - dt);
     }
   }
 
@@ -515,6 +525,7 @@ export class PongEngine {
       charge: pendingPower?.charge ?? (side === 'left' ? this.chargeLeft : this.chargeRight),
       timing,
     });
+    this.startSwing(paddle, shot);
     this.spendPower(side, shot);
     return { ...result, shot, timing };
   }
@@ -833,66 +844,90 @@ export class PongEngine {
   private drawPaddle(paddle: Paddle, h: number) {
     const ctx = this.ctx;
     const { x, y, color1, color2, glowColor } = paddle;
-
-    // Racket head (oval shape)
     const cx = x + PADDLE_W / 2;
     const cy = y + h / 2;
-    const rx = PADDLE_W * 0.9;  // horizontal radius
-    const ry = h / 2;           // vertical radius
+    const facing = x < W / 2 ? 1 : -1;
+    const scale = 2;
+    const phase = paddle.swingTimer > 0 ? 1 - paddle.swingTimer / 0.38 : 1;
+    const eased = phase * phase * (3 - 2 * phase);
+    const swingAngles: Record<ShotType, [number, number]> = {
+      normal: [-0.85, 0.45],
+      topspin: [0.9, -0.72],
+      slice: [-1.05, 0.82],
+      stopspin: [-0.2, 0.34],
+      power: [-1.25, 1.02],
+    };
+    const [windup, followThrough] = swingAngles[paddle.swingShot];
+    const racketAngle = paddle.swingTimer > 0
+      ? windup + (followThrough - windup) * eased
+      : -0.12;
+    const footShift = Math.max(-1, Math.min(1, paddle.vy / 240));
 
-    // Glow
-    ctx.shadowBlur = 22;
-    ctx.shadowColor = glowColor;
+    ctx.save();
+    ctx.translate(cx, cy + 12);
+    ctx.scale(facing * scale, scale);
 
-    // Racket frame
-    const grad = ctx.createLinearGradient(x, y, x + PADDLE_W, y + h);
-    grad.addColorStop(0, color1);
-    grad.addColorStop(0.5, color2);
-    grad.addColorStop(1, color1);
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Racket strings — vertical
-    ctx.strokeStyle = `${glowColor}33`;
-    ctx.lineWidth = 0.8;
-    const stringCount = 5;
-    for (let i = 1; i < stringCount; i++) {
-      const sy = y + (h / stringCount) * i;
-      // Calculate x extent of ellipse at this y
-      const relY = (sy - cy) / ry;
-      if (Math.abs(relY) >= 1) continue;
-      const xExtent = rx * Math.sqrt(1 - relY * relY);
-      ctx.beginPath();
-      ctx.moveTo(cx - xExtent, sy);
-      ctx.lineTo(cx + xExtent, sy);
-      ctx.stroke();
-    }
-
-    // Racket strings — horizontal
-    const hStringCount = 3;
-    for (let i = 1; i < hStringCount; i++) {
-      const sx = x + (PADDLE_W / hStringCount) * i;
-      const relX = (sx - cx) / rx;
-      if (Math.abs(relX) >= 1) continue;
-      const yExtent = ry * Math.sqrt(1 - relX * relX);
-      ctx.beginPath();
-      ctx.moveTo(sx, cy - yExtent);
-      ctx.lineTo(sx, cy + yExtent);
-      ctx.stroke();
-    }
-
-    // Racket sweet spot — subtle center dot
-    ctx.globalAlpha = 0.4;
-    ctx.fillStyle = glowColor;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 2, 0, Math.PI * 2);
-    ctx.fill();
+    // Small court shadow and chunky pixel-art legs.
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#02030b';
+    ctx.fillRect(-10, 14, 21, 3);
     ctx.globalAlpha = 1;
+    ctx.fillStyle = '#15234a';
+    ctx.fillRect(-6, 5, 5, 7);
+    ctx.fillRect(1, 5, 5, 7);
+    ctx.fillRect(-7 - footShift, 11, 7, 3);
+    ctx.fillRect(1 + footShift, 11, 7, 3);
+    ctx.fillStyle = '#d6e8ff';
+    ctx.fillRect(-7 - footShift, 13, 7, 1);
+    ctx.fillRect(1 + footShift, 13, 7, 1);
 
+    // Jersey and shorts are drawn on a crisp pixel grid.
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = glowColor;
+    ctx.fillStyle = color1;
+    ctx.fillRect(-7, -10, 14, 15);
+    ctx.fillRect(-9, -8, 3, 8);
+    ctx.fillRect(6, -8, 3, 7);
     ctx.shadowBlur = 0;
+    ctx.fillStyle = color2;
+    ctx.fillRect(-2, -9, 2, 12);
+    ctx.fillStyle = '#182244';
+    ctx.fillRect(-7, 4, 14, 4);
+    ctx.fillRect(-1, 4, 2, 4);
+
+    // Head, hair and sweatband.
+    ctx.fillStyle = '#f3b18b';
+    ctx.fillRect(-4, -21, 9, 9);
+    ctx.fillRect(4, -18, 2, 3);
+    ctx.fillStyle = '#17213d';
+    ctx.fillRect(-5, -23, 10, 4);
+    ctx.fillRect(-5, -20, 3, 3);
+    ctx.fillStyle = '#fff4d6';
+    ctx.fillRect(2, -18, 2, 1);
+
+    // Back arm stays tucked in while the racket arm follows the chosen stroke.
+    ctx.fillStyle = '#f3b18b';
+    ctx.fillRect(-9, -8, 3, 8);
+    ctx.fillRect(-10, -1, 4, 2);
+    ctx.save();
+    ctx.translate(5, -8);
+    ctx.rotate(racketAngle);
+    ctx.fillRect(0, -1.5, 10, 3);
+    ctx.fillRect(8, -2, 4, 4);
+    ctx.shadowBlur = paddle.swingTimer > 0 ? 8 : 3;
+    ctx.shadowColor = glowColor;
+    ctx.strokeStyle = '#e5fbff';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(12, -4.5, 6, 9);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = `${glowColor}cc`;
+    ctx.lineWidth = 0.65;
+    ctx.beginPath();
+    ctx.moveTo(13, -2); ctx.lineTo(17, 2);
+    ctx.moveTo(13, 2); ctx.lineTo(17, -2);
+    ctx.stroke();
+    ctx.restore();
+    ctx.restore();
   }
 
   private drawBallTrail(b: Ball, color: string) {
@@ -923,22 +958,29 @@ export class PongEngine {
     ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
     ctx.fill();
 
-    // Tennis ball seam — curved line across the ball
+    // Rotate the felt seams with the flight and add extra roll for spin shots.
+    const rolling = this.time * (5 + Math.hypot(b.vx, b.vy) * 0.75) * Math.sign(b.vx || 1);
+    const seamRotation = rolling + this.time * b.spin * 4.5;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(seamRotation);
+    ctx.beginPath();
+    ctx.arc(0, 0, BALL_R, 0, Math.PI * 2);
+    ctx.clip();
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.78)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, BALL_R * 0.7, -0.8, 0.8);
+    ctx.moveTo(-4, -7);
+    ctx.bezierCurveTo(5, -5, 5, 5, -4, 7);
+    ctx.moveTo(4, -7);
+    ctx.bezierCurveTo(-5, -5, -5, 5, 4, 7);
     ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, BALL_R * 0.7, Math.PI - 0.8, Math.PI + 0.8);
-    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(-3, -4, 2, 2);
+    ctx.restore();
 
-    // Highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.beginPath();
-    ctx.arc(b.x - 2, b.y - 2, BALL_R * 0.3, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.shadowBlur = 0;
   }
 
   private drawDigit(x: number, y: number, digit: number, scale: number, color: string, glow: string) {

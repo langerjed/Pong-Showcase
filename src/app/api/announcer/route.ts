@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 const validKinds = new Set(['point', 'shot', 'long-rally']);
-const validShots = new Set(['normal', 'slice', 'stopspin', 'power']);
+const validShots = new Set(['normal', 'topspin', 'slice', 'stopspin', 'power']);
 const validPlayers = new Set(['PLAYER', 'CPU', 'P1', 'P2']);
 const validReads = new Set(['', 'high', 'middle', 'low']);
 const validTimings = new Set(['perfect', 'early', 'late', 'none']);

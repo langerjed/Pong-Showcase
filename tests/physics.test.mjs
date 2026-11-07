@@ -45,6 +45,15 @@ test('slice and stop-spin slow the ball and apply curve', () => {
   assert.ok(Math.abs(slice.vy / slice.vx) < Math.abs(normal.vy / normal.vx));
 });
 
+test('topspin adds a downward-curving ball for either player direction', () => {
+  const leftPlayer = calculateShot({ side: 'left', shot: 'topspin', hitOffset: 0, paddleVelocity: 0, incomingVy: 0, incomingSpeed: 6 });
+  const rightPlayer = calculateShot({ side: 'right', shot: 'topspin', hitOffset: 0, paddleVelocity: 0, incomingVy: 0, incomingSpeed: 6 });
+  assert.ok(leftPlayer.spin > 0);
+  assert.ok(rightPlayer.spin < 0);
+  assert.ok(applySpin(leftPlayer.vx, leftPlayer.vy, leftPlayer.spin, 0.12).vy > leftPlayer.vy);
+  assert.ok(applySpin(rightPlayer.vx, rightPlayer.vy, rightPlayer.spin, 0.12).vy > rightPlayer.vy);
+});
+
 test('charged power shots hit harder without exceeding the hard cap', () => {
   const power = calculateShot({ side: 'right', shot: 'power', hitOffset: 0.4, paddleVelocity: 0, incomingVy: 1, incomingSpeed: 7.4 });
   assert.ok(power.speed > BALL_SPEED_MAX);

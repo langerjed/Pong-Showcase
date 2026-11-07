@@ -53,13 +53,15 @@ export default function Home() {
             <div className="control-divider" />
             <div className="control-item"><span className="keycap">Z</span><span className="control-label"><strong>SLICE</strong><small>FLAT + SPIN</small></span></div>
             <div className="control-divider" />
+            <div className="control-item"><span className="keycap">V</span><span className="control-label"><strong>TOPSPIN</strong><small>DRIVE IT DOWN</small></span></div>
+            <div className="control-divider" />
             <div className="control-item"><span className="keycap">X</span><span className="control-label"><strong>STOP-SPIN</strong><small>DROP THE PACE</small></span></div>
             <div className="control-divider" />
             <div className="control-item"><span className="keycap">C</span><span className="control-label"><strong>POWER</strong><small>HOLD, RELEASE IN GREEN</small></span></div>
             <div className="control-divider" />
             <div className="control-item"><span className="keycap wide">SPACE</span><span className="control-label"><strong>SERVE</strong><small>AIM WITH PADDLE</small></span></div>
             <div className="control-spacer" />
-            <div className="control-hint"><span>P1</span> W/S + A/D/F <b>·</b> P2 ARROWS + Z/X/C <b>·</b> ENTER SELECT <b>·</b> ESC PAUSE</div>
+            <div className="control-hint"><span>P1</span> W/S + A/E/D/F <b>·</b> P2 ARROWS + V/Z/X/C <b>·</b> ENTER SELECT <b>·</b> ESC PAUSE</div>
           </div>
         </section>
 

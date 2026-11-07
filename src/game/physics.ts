@@ -62,6 +62,10 @@ export function calculateShot(input: ShotInput): ShotResult {
     angle *= 0.55;
     shotSpeed *= 0.9;
     spin = -Math.sign(paddleMotion || hitOffset || 1) * 0.72;
+  } else if (input.shot === 'topspin') {
+    angle = angle * 0.9 + Math.sign(input.incomingVy || hitOffset || 1) * 0.06;
+    shotSpeed *= 0.94;
+    spin = direction * 1.15;
   } else if (input.shot === 'stopspin') {
     angle *= 0.25;
     shotSpeed *= 0.72;
@@ -73,6 +77,7 @@ export function calculateShot(input: ShotInput): ShotResult {
     angle *= isPerfect ? 0.68 : 1.16;
     if (input.timing === 'early') angle += 0.12;
     if (input.timing === 'late') angle -= 0.12;
+    spin = direction * 0.62;
   }
 
   const maxAngle = input.shot === 'slice' ? 0.52 : input.shot === 'stopspin' ? 0.3 : 0.85;
@@ -94,7 +99,12 @@ export function calculateServe(side: 'left' | 'right', aim: number, shot: ShotTy
   const direction = side === 'left' ? 1 : -1;
   const angle = clamp(aim, -1, 1) * (shot === 'slice' ? 0.38 : 0.48);
   const serveSpeed = shot === 'slice' ? 4.05 : shot === 'stopspin' ? 3.7 : shot === 'power' ? 5.45 : 4.55;
-  const spin = shot === 'slice' ? -Math.sign(aim || 1) * 0.45 : shot === 'stopspin' ? Math.sign(aim || 1) * 0.65 : 0;
+  const spin = shot === 'slice'
+    ? -Math.sign(aim || 1) * 0.45
+    : shot === 'stopspin' ? Math.sign(aim || 1) * 0.65
+    : shot === 'topspin' ? direction * 0.85
+    : shot === 'power' ? direction * 0.45
+    : direction * 0.25;
   return {
     vx: Math.cos(angle) * serveSpeed * direction,
     vy: Math.sin(angle) * serveSpeed,

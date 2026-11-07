@@ -22,6 +22,8 @@ export interface Paddle {
   color2: string;
   glowColor: string;
   name: string;
+  swingShot: ShotType;
+  swingTimer: number;
 }
 
 export interface Ball {
@@ -36,7 +38,7 @@ export interface Ball {
   frozen: boolean;
 }
 
-export type ShotType = 'normal' | 'slice' | 'stopspin' | 'power';
+export type ShotType = 'normal' | 'topspin' | 'slice' | 'stopspin' | 'power';
 export type ShotTiming = 'perfect' | 'early' | 'late' | 'none';
 
 export interface AnnouncerEvent {
