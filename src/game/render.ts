@@ -3,7 +3,7 @@
 //  Everything is projected from the simulation's 3D metres.
 // ============================================================
 
-import { COURT, netHeightAt, TOSS_IDEAL, WINDOW } from './sim';
+import { COURT, LINES, MARK_RADIUS, netHeightAt, TOSS_IDEAL, WINDOW } from './sim';
 import type { End, Player, TennisSim } from './sim';
 import type { ShotType } from './types';
 
@@ -114,6 +114,10 @@ export class CourtRenderer {
     this.quad(ctx, [[-edge, -17.5], [edge, -17.5], [edge, 26], [-edge, 26]], '#2f7a58');
     const hl = COURT.halfLength, dh = COURT.doublesHalf, sh = COURT.singlesHalf;
     this.quad(ctx, [[-dh, -hl], [dh, -hl], [dh, hl], [-dh, hl]], '#22639f');
+    // Doubles alleys are out in singles, so they are tinted to make the playing area obvious.
+    const alley = '#3a7f77';
+    this.quad(ctx, [[-dh, -hl], [-sh, -hl], [-sh, hl], [-dh, hl]], alley);
+    this.quad(ctx, [[sh, -hl], [dh, -hl], [dh, hl], [sh, hl]], alley);
     for (let i = 0; i < 16000; i++) {
       const p = project((Math.random() - 0.5) * 34, -17 + Math.random() * 34, 0);
       ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.05)';
@@ -121,21 +125,25 @@ export class CourtRenderer {
     }
 
     // Court lines, painted as ground quads so they narrow with distance.
-    const lineW = 0.06;
-    const white = 'rgba(255,255,255,0.95)';
-    const across = (y: number, half: number, w = lineW) => this.quad(ctx, [[-half, y - w], [half, y - w], [half, y + w], [-half, y + w]], white);
-    const along = (x: number, y1: number, y2: number, w = lineW) => this.quad(ctx, [[x - w, y1], [x + w, y1], [x + w, y2], [x - w, y2]], white);
-    across(hl, dh, 0.09);
-    across(-hl, dh, 0.09);
-    along(dh, -hl, hl);
-    along(-dh, -hl, hl);
-    along(sh, -hl, hl);
-    along(-sh, -hl, hl);
-    across(COURT.serviceLine, sh);
-    across(-COURT.serviceLine, sh);
-    along(0, -COURT.serviceLine, COURT.serviceLine);
-    along(0, hl - 0.3, hl);
-    along(0, -hl, -hl + 0.3);
+    const white = 'rgba(255,255,255,0.97)';
+    const faded = 'rgba(255,255,255,0.42)';
+    const across = (y: number, x1: number, x2: number, w: number, color = white) => this.quad(ctx, [[x1, y - w], [x2, y - w], [x2, y + w], [x1, y + w]], color);
+    const along = (x: number, y1: number, y2: number, w: number, color = white) => this.quad(ctx, [[x - w, y1], [x + w, y1], [x + w, y2], [x - w, y2]], color);
+    // The outer doubles markings are faded; the singles court that counts is bright.
+    along(dh, -hl, hl, LINES.doubles, faded);
+    along(-dh, -hl, hl, LINES.doubles, faded);
+    for (const y of [hl, -hl]) {
+      across(y, -dh, -sh, LINES.doubles, faded);
+      across(y, sh, dh, LINES.doubles, faded);
+      across(y, -sh - LINES.sideline, sh + LINES.sideline, LINES.baseline);
+    }
+    along(sh, -hl, hl, LINES.sideline);
+    along(-sh, -hl, hl, LINES.sideline);
+    across(COURT.serviceLine, -sh, sh, LINES.service);
+    across(-COURT.serviceLine, -sh, sh, LINES.service);
+    along(0, -COURT.serviceLine, COURT.serviceLine, LINES.centre);
+    along(0, hl - 0.3, hl, LINES.centre);
+    along(0, -hl, -hl + 0.3, LINES.centre);
     return layer;
   }
 
@@ -212,10 +220,62 @@ export class CourtRenderer {
     const c = project(x, y, 0);
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = 'rgba(245,235,190,0.85)';
+    ctx.fillStyle = 'rgba(255,214,120,0.95)';
+    ctx.strokeStyle = 'rgba(70,35,0,0.8)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.ellipse(c.x, c.y, 0.2 * c.s, 0.085 * c.s, 0, 0, Math.PI * 2);
+    // The same radius the line call uses, flattened only by the camera angle.
+    ctx.ellipse(c.x, c.y, MARK_RADIUS * c.s, Math.max(1.5, MARK_RADIUS * c.s * 0.42), 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** Close-call replay: an overhead zoom of the mark against the real lines, so every call can be checked. */
+  drawLineReplay(ctx: CanvasRenderingContext2D, call: { x: number; y: number; margin: number; inCourt: boolean }, alpha: number) {
+    const size = 74;
+    const cx = 18 + size, cy = H - 34 - size;
+    const zoom = 130;
+    const sx = (x: number) => cx + (x - call.x) * zoom;
+    const sy = (y: number) => cy + (y - call.y) * zoom;
+    const hl = COURT.halfLength, sh = COURT.singlesHalf;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(5,10,20,0.9)';
+    ctx.fillRect(cx - size - 6, cy - size - 6, size * 2 + 12, size * 2 + 32);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cx - size, cy - size, size * 2, size * 2);
+    ctx.clip();
+    ctx.fillStyle = '#2f7a58';
+    ctx.fillRect(cx - size, cy - size, size * 2, size * 2);
+    ctx.fillStyle = '#3a7f77';
+    ctx.fillRect(sx(-COURT.doublesHalf), sy(-hl), (COURT.doublesHalf * 2) * zoom, hl * 2 * zoom);
+    ctx.fillStyle = '#22639f';
+    ctx.fillRect(sx(-sh), sy(-hl), sh * 2 * zoom, hl * 2 * zoom);
+    ctx.fillStyle = '#ffffff';
+    const v = (x: number, y1: number, y2: number, w: number) => ctx.fillRect(sx(x - w), sy(y1), w * 2 * zoom, (y2 - y1) * zoom);
+    const h = (y: number, x1: number, x2: number, w: number) => ctx.fillRect(sx(x1), sy(y - w), (x2 - x1) * zoom, w * 2 * zoom);
+    v(sh, -hl, hl, LINES.sideline);
+    v(-sh, -hl, hl, LINES.sideline);
+    h(hl, -sh - LINES.sideline, sh + LINES.sideline, LINES.baseline);
+    h(-hl, -sh - LINES.sideline, sh + LINES.sideline, LINES.baseline);
+    h(COURT.serviceLine, -sh, sh, LINES.service);
+    h(-COURT.serviceLine, -sh, sh, LINES.service);
+    v(0, -COURT.serviceLine, COURT.serviceLine, LINES.centre);
+    ctx.fillStyle = 'rgba(255,214,120,0.95)';
+    ctx.strokeStyle = '#3a1c00';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, MARK_RADIUS * zoom, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    ctx.font = '8px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = call.inCourt ? '#39e36f' : '#ff8a65';
+    const gapCm = Math.max(1, Math.round((-call.margin - MARK_RADIUS) * 100));
+    ctx.fillText(call.inCourt ? 'ON THE LINE: IN' : `OUT BY ${gapCm} CM`, cx, cy + size + 18);
     ctx.restore();
   }
 

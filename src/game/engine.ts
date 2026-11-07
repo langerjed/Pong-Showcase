@@ -7,7 +7,7 @@ import { GameState } from './types';
 import type { AnnouncerEvent, ShotTiming, ShotType } from './types';
 import { InputDevice, mapGamepads, padEnd, shotForKey, SIDE_KEYS } from './input';
 import { CourtRenderer, H, project, SHOT_COLORS, W } from './render';
-import { TennisSim } from './sim';
+import { REACH, TennisSim } from './sim';
 import type { End, SimEvent } from './sim';
 
 const MODE_OPTIONS = ['1 PLAYER  vs  CPU', '2 PLAYERS  LOCAL', 'TIMING PRACTICE'];
@@ -67,6 +67,7 @@ export class PongEngine {
   private floats: { x: number; y: number; text: string; color: string; life: number; size: number }[] = [];
   private sparks: { x: number; y: number; vx: number; vy: number; life: number; color: string }[] = [];
   private bigCall: { text: string; life: number; color: string } | null = null;
+  private lineReplay: { x: number; y: number; margin: number; inCourt: boolean; life: number } | null = null;
   private readout: { text: string; color: string; at: number } | null = null;
   private toast: { text: string; until: number } | null = null;
   private hitStop = 0;
@@ -325,6 +326,7 @@ export class PongEngine {
     this.sparks = [];
     this.readout = null;
     this.bigCall = null;
+    this.lineReplay = null;
     this.longRallyCalled = false;
     this.sim = new TennisSim({
       practice,
@@ -412,7 +414,7 @@ export class PongEngine {
         this.rumble(event.end, perfect ? 0.9 : event.shot === 'flat' ? 0.5 : 0.2, 0.3, perfect ? 170 : 70);
         if (human) {
           const type = event.serve ? `${SHOT_LABELS[event.shot]} SERVE` : SHOT_LABELS[event.shot];
-          const stretched = event.stretched ? '  STRETCHED' : '';
+          const stretched = event.stretched ? '  STRETCHED' : event.onTheRun ? '  ON THE RUN' : '';
           this.readout = {
             text: `${type}  ${event.mph} MPH  ${event.rpm} RPM  ${event.timing.toUpperCase()}${stretched}`,
             color: TIMING_COLORS[event.timing],
@@ -432,6 +434,9 @@ export class PongEngine {
         this.audio.bounce(this.panFor(event.x));
         this.marks.push({ x: event.x, y: event.y, life: 1 });
         if (this.marks.length > 6) this.marks.shift();
+        break;
+      case 'linecall':
+        this.lineReplay = { x: event.x, y: event.y, margin: event.margin, inCourt: event.inCourt, life: 1 };
         break;
       case 'net':
         this.audio.netHit(this.panFor(event.x));
@@ -536,6 +541,10 @@ export class PongEngine {
       this.bigCall.life -= dt / 1.1;
       if (this.bigCall.life <= 0) this.bigCall = null;
     }
+    if (this.lineReplay) {
+      this.lineReplay.life -= dt / 2.4;
+      if (this.lineReplay.life <= 0) this.lineReplay = null;
+    }
     this.shake = this.shake > 0.3 ? this.shake * 0.86 : 0;
   }
 
@@ -604,6 +613,16 @@ export class PongEngine {
     for (const mark of this.marks) this.render.drawBallMark(ctx, mark.x, mark.y, mark.life);
     if (sim.landing && sim.phase === 'rally' && sim.ball.bounces === 0 && sim.lastHitter && this.isHuman(sim.lastHitter === 'near' ? 'far' : 'near')) {
       this.render.drawGroundRing(ctx, sim.landing.x, sim.landing.y, 0.42, '#ffffff', 0.6);
+    }
+
+    // Footwork cue: where you will meet the ball, green in the sweet spot, amber at a stretch, red out of reach.
+    for (const end of ['far', 'near'] as const) {
+      const plan = sim.plans[end];
+      if (!plan || !this.isHuman(end) || (end === 'far' && !this.twoPlayer)) continue;
+      const player = sim.players[end];
+      const distance = Math.hypot(plan.x - player.x, plan.y - player.y);
+      const color = distance <= 1.3 ? '#39e36f' : distance <= REACH ? '#ffb300' : '#ff5a4f';
+      this.render.drawGroundRing(ctx, plan.x, plan.y, 0.3, color, 0.9);
     }
 
     // Painter's order, far to near, with the net between the two ends of the court.
@@ -744,6 +763,7 @@ export class PongEngine {
       ctx.fillText(this.bigCall.text, W / 2, 262);
     }
     ctx.globalAlpha = 1;
+    if (this.lineReplay && this.inPlay()) this.render.drawLineReplay(ctx, this.lineReplay, Math.min(1, this.lineReplay.life * 4));
     if (this.toast && this.time < this.toast.until) this.platedText(this.toast.text, W / 2, H - 40, 9, '#d6f53c');
     ctx.restore();
   }

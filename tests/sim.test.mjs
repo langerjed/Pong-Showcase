@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const { COURT, gradeTiming, netHeightAt, SHOTS, solveLaunch, stepBall, TennisSim, TOSS_IDEAL, toMph, toRpm, WINDOW } = await import('../.test-build/sim.js');
+const { correctForCurve, COURT, courtMargin, gradeTiming, isIn, LINES, MARK_RADIUS, netHeightAt, serviceMargin, SHOTS, solveLaunch, stepBall, TennisSim, TOSS_IDEAL, toMph, toRpm, WINDOW } = await import('../.test-build/sim.js');
 const { applyDeadzone, mapGamepads, padEnd, shotForKey } = await import('../.test-build/input.js');
 const { fallbackCommentary } = await import('../.test-build/announcer.js');
 
@@ -53,7 +53,7 @@ test('timing grades control quality and direction of error', () => {
   assert.ok(gradeTiming(0.15).lift < 0, 'late drops towards the net');
 });
 
-function neutralRally(errSeconds, shot = 'topspin', seed = 7) {
+function neutralRally(errSeconds, shot = 'topspin', seed = 7, aimX = 0) {
   // A practice feed returned by a scripted swing at a fixed timing error.
   const sim = new TennisSim({ practice: true, rng: seeded(seed) });
   sim.events = [];
@@ -63,7 +63,12 @@ function neutralRally(errSeconds, shot = 'topspin', seed = 7) {
   for (let i = 0; i < 1500; i++) {
     const plan = sim.plans.near;
     if (plan && !released) { p.x = plan.x - 0.5; p.y = plan.y + 0.2; }
-    if (plan && !released && sim.t >= plan.t + errSeconds) { sim.release('near'); released = true; }
+    if (plan && !released && sim.t >= plan.t + errSeconds) {
+      p.inputX = aimX;
+      sim.release('near');
+      p.inputX = 0;
+      released = true;
+    }
     sim.tick(1 / 120);
     const done = sim.events.find(e => e.type === 'call');
     if (done) return { call: done.text, hit: sim.events.find(e => e.type === 'hit' && e.end === 'near') };
@@ -224,4 +229,54 @@ test('local announcer has a line for each shot', () => {
   assert.match(fallbackCommentary({ ...base, shot: 'lob' }), /lob/i);
   assert.match(fallbackCommentary({ ...base, shot: 'drop' }), /drop/i);
   assert.match(fallbackCommentary({ ...base, shot: 'flat', timing: 'perfect' }), /perfect/i);
+});
+
+test('any part of the mark touching the line is in, and just clear of it is out', () => {
+  const edgeX = COURT.singlesHalf + LINES.sideline;
+  const edgeY = COURT.halfLength + LINES.baseline;
+  assert.ok(isIn(courtMargin(COURT.singlesHalf, -9)), 'centre of the sideline');
+  assert.ok(isIn(courtMargin(edgeX, -9)), 'outer edge of the sideline');
+  assert.ok(isIn(courtMargin(edgeX + MARK_RADIUS - 0.001, -9)), 'mark just touching the sideline');
+  assert.ok(!isIn(courtMargin(edgeX + MARK_RADIUS + 0.001, -9)), 'mark just clear of the sideline');
+  assert.ok(isIn(courtMargin(1, -edgeY)), 'outer edge of the baseline');
+  assert.ok(isIn(courtMargin(1, edgeY + MARK_RADIUS - 0.001)), 'mark just touching the baseline');
+  assert.ok(!isIn(courtMargin(1, edgeY + MARK_RADIUS + 0.001)), 'mark just clear of the baseline');
+  assert.ok(!isIn(courtMargin(COURT.singlesHalf + 0.5, -9)), 'the doubles alley is out');
+});
+
+test('service boxes use the same rule, including the centre line', () => {
+  assert.ok(isIn(serviceMargin(0, -5, -1)), 'on the centre line');
+  assert.ok(isIn(serviceMargin(LINES.centre, -5, -1)), 'edge of the centre line');
+  assert.ok(!isIn(serviceMargin(0.5, -5, -1)), 'wrong box');
+  assert.ok(isIn(serviceMargin(-2, -(COURT.serviceLine + LINES.service), -1)), 'on the service line');
+  assert.ok(!isIn(serviceMargin(-2, -(COURT.serviceLine + 0.4), -1)), 'long');
+});
+
+test('a bounce is recorded where the ball touched down, not a step later', () => {
+  // Starts 3 cm above the ground-contact height at 20 m/s down and 30 m/s along the court.
+  const b = { x: 0, y: 0, z: 0.063, vx: 0, vy: -30, vz: -20, spin: 0, curve: 0, e: 0.6, f: 0.7, bounces: 0, netted: true };
+  const event = stepBall(b, 1 / 60);
+  assert.equal(event, 'bounce');
+  assert.ok(Math.abs(b.y + 0.045) < 0.01, `touched down at ${b.y}, not a full step's 0.5 m along`);
+});
+
+test('curving shots still land where they were aimed', () => {
+  const spec = SHOTS.slice;
+  const from = { x: -2, y: 12, z: 1 };
+  const curve = spec.curve;
+  const launch = correctForCurve(from, solveLaunch(from, 3.4, -9, spec.speed, spec), curve, spec, 3.4, -9);
+  const b = { ...from, vx: launch.vx, vy: launch.vy, vz: launch.vz, spin: spec.spin, curve, e: spec.bounceE, f: spec.bounceF, bounces: 0, netted: false };
+  for (let i = 0; i < 1200 && b.bounces === 0; i++) stepBall(b, 1 / 120);
+  assert.ok(Math.abs(b.x - 3.4) < 0.3 && Math.abs(b.y + 9) < 0.5, `landed ${b.x},${b.y}`);
+});
+
+test('a perfectly timed shot aimed for the lines lands in, for every stroke and both sides', () => {
+  for (const shot of ['topspin', 'flat', 'slice', 'lob', 'drop']) {
+    for (const aim of [-1, 1]) {
+      for (let seed = 1; seed <= 12; seed++) {
+        const result = neutralRally(0, shot, seed * 211, aim);
+        assert.equal(result.call, 'IN', `${shot} aim ${aim} seed ${seed}`);
+      }
+    }
+  }
 });

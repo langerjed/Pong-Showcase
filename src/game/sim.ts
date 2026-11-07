@@ -19,6 +19,27 @@ export const COURT = {
   netHalf: 6.4,
 };
 
+/** Half-widths of the painted lines. The call and the drawing share these, so what you see is what is judged. */
+export const LINES = { baseline: 0.09, sideline: 0.06, service: 0.06, centre: 0.06, doubles: 0.05 };
+/** Radius of the mark a bounce leaves. Any part of the mark touching any part of the line is in. */
+export const MARK_RADIUS = 0.11;
+
+/** Metres inside the outer edge of the singles lines; negative means the ball's centre landed beyond them. */
+export function courtMargin(x: number, y: number) {
+  return Math.min(COURT.singlesHalf + LINES.sideline - Math.abs(x), COURT.halfLength + LINES.baseline - Math.abs(y));
+}
+
+/** The same measure for a service box. boxSide is the sign of x for the box the serve must land in. */
+export function serviceMargin(x: number, y: number, boxSide: number) {
+  return Math.min(
+    COURT.singlesHalf + LINES.sideline - Math.abs(x),
+    COURT.serviceLine + LINES.service - Math.abs(y),
+    x * boxSide + LINES.centre,
+  );
+}
+
+export const isIn = (margin: number) => margin + MARK_RADIUS >= 0;
+
 /** Slows real time so a browser player has a human chance against realistic ball speeds. */
 export const TIME_SCALE = 0.72;
 export const STEP = 1 / 120;
@@ -74,6 +95,8 @@ export interface BallState {
 
 export type BallEvent = 'bounce' | 'net' | null;
 
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
 export function netHeightAt(x: number) {
   return COURT.netCentre + (Math.min(Math.abs(x), COURT.netHalf) / COURT.netHalf) * (COURT.netPost - COURT.netCentre);
 }
@@ -84,7 +107,7 @@ export function stepBall(b: BallState, h: number): BallEvent {
   b.vx += (-DRAG * speed * b.vx + b.curve * lift) * h;
   b.vy += -DRAG * speed * b.vy * h;
   b.vz += (-G - DRAG * speed * b.vz - b.spin * MAGNUS * lift) * h;
-  const prevY = b.y;
+  const prevX = b.x, prevY = b.y, prevZ = b.z;
   b.x += b.vx * h;
   b.y += b.vy * h;
   b.z += b.vz * h;
@@ -97,6 +120,10 @@ export function stepBall(b: BallState, h: number): BallEvent {
     return 'net';
   }
   if (b.z <= BALL_R && b.vz < 0) {
+    // A fast ball travels 25 cm in one step, so find where it really touched down between steps.
+    const touch = prevZ > b.z ? clamp01((prevZ - BALL_R) / (prevZ - b.z)) : 1;
+    b.x = prevX + (b.x - prevX) * touch;
+    b.y = prevY + (b.y - prevY) * touch;
     b.z = BALL_R;
     b.vz = -b.vz * b.e;
     if (b.vz < 0.35) b.vz = 0;
@@ -164,6 +191,23 @@ export function solveLaunch(from: { x: number; y: number; z: number }, tx: numbe
   };
 }
 
+/** Turns a launch so a curving ball still lands where it was aimed, instead of drifting off the target. */
+export function correctForCurve(from: { x: number; y: number; z: number }, launch: Launch, curve: number, spec: ShotSpec, tx: number, ty: number): Launch {
+  if (curve === 0) return launch;
+  let { vx, vy } = launch;
+  const wanted = Math.atan2(ty - from.y, tx - from.x);
+  for (let pass = 0; pass < 3; pass++) {
+    const b: BallState = { x: from.x, y: from.y, z: from.z, vx, vy, vz: launch.vz, spin: spec.spin, curve, e: spec.bounceE, f: spec.bounceF, bounces: 0, netted: true };
+    for (let i = 0; i < 1200 && b.bounces === 0; i++) stepBall(b, STEP);
+    const turn = wanted - Math.atan2(b.y - from.y, b.x - from.x);
+    const heading = Math.atan2(vy, vx) + turn;
+    const horizontal = Math.hypot(vx, vy);
+    vx = Math.cos(heading) * horizontal;
+    vy = Math.sin(heading) * horizontal;
+  }
+  return { ...launch, vx, vy };
+}
+
 export interface TimingResult {
   grade: ShotTiming;
   pace: number;
@@ -225,9 +269,10 @@ export interface Player {
 }
 
 export type SimEvent =
-  | { type: 'hit'; end: End; shot: ShotType; timing: ShotTiming; mph: number; rpm: number; serve: boolean; x: number; y: number; z: number; stretched: boolean }
+  | { type: 'hit'; end: End; shot: ShotType; timing: ShotTiming; mph: number; rpm: number; serve: boolean; x: number; y: number; z: number; stretched: boolean; onTheRun: boolean }
   | { type: 'bounce'; x: number; y: number; z: number }
   | { type: 'net'; x: number }
+  | { type: 'linecall'; x: number; y: number; margin: number; inCourt: boolean }
   | { type: 'call'; text: string; x: number; y: number; end: End }
   | { type: 'point'; winner: End; reason: string; rally: number }
   | { type: 'game'; winner: End }
@@ -243,9 +288,9 @@ export interface SimConfig {
 }
 
 const CPU_LEVELS = [
-  { sigma: 0.11, react: 0.22, speed: 0.84, aim: 1.8, risk: 0.05 },
-  { sigma: 0.08, react: 0.13, speed: 0.93, aim: 2.7, risk: 0.14 },
-  { sigma: 0.058, react: 0.07, speed: 1, aim: 3.3, risk: 0.24 },
+  { sigma: 0.11, react: 0.22, speed: 0.84, aim: 1.8, risk: 0.05, servePace: 0.72, depthSpread: 1.3 },
+  { sigma: 0.08, react: 0.13, speed: 0.93, aim: 2.7, risk: 0.14, servePace: 0.84, depthSpread: 0.9 },
+  { sigma: 0.058, react: 0.07, speed: 1, aim: 3.3, risk: 0.24, servePace: 0.95, depthSpread: 0.5 },
 ];
 
 const newSwing = (): Swing => ({
@@ -553,7 +598,9 @@ export class TennisSim {
 
     const stretch = clamp((reach - SWEET_REACH) / (REACH - SWEET_REACH), 0, 1);
     const lowBall = b.z < 0.6 ? 0.88 : 1;
-    const speed = spec.speed * (0.74 + 0.26 * sw.power) * timing.pace * (1 - stretch * 0.25) * (sw.shot === 'flat' ? lowBall : 1);
+    // Set feet hit clean; a full sprint through contact costs pace and control.
+    const onTheRun = clamp((Math.hypot(p.vx, p.vy) - 2.4) / 3, 0, 1);
+    const speed = spec.speed * (0.74 + 0.26 * sw.power) * timing.pace * (1 - stretch * 0.25) * (1 - onTheRun * 0.1) * (sw.shot === 'flat' ? lowBall : 1);
 
     // The direction held at the swing picks the target.
     const aimX = sw.aimX;
@@ -562,9 +609,10 @@ export class TennisSim {
     const depthInput = p.end === 'near' ? -sw.aimY : sw.aimY;
     const ty = -sign * clamp(spec.depth + depthInput * spec.depthRange, 1.6, COURT.halfLength - 0.5);
 
-    const launch = solveLaunch(b, tx, ty, speed, spec);
+    const curve = spec.curve * (tx >= b.x ? 1 : -1);
+    const launch = correctForCurve(b, solveLaunch(b, tx, ty, speed, spec), curve, spec, tx, ty);
     const handSign = sw.hand === 'fh' ? 1 : -1;
-    const scatter = (this.rng() - 0.5) * stretch * 5;
+    const scatter = (this.rng() - 0.5) * (stretch * 5 + onTheRun * 3);
     const azimuth = (timing.pull * handSign * sign + scatter) * DEG;
     const liftError = timing.lift * (spec.highArc ? 1.6 : 1) * DEG;
 
@@ -577,7 +625,7 @@ export class TennisSim {
     b.vy = Math.cos(elevation) * Math.sin(heading) * total;
     b.vz = Math.sin(elevation) * total;
     b.spin = spec.spin * timing.spin;
-    b.curve = spec.curve * (tx >= b.x ? 1 : -1);
+    b.curve = curve;
     b.e = spec.bounceE;
     b.f = spec.bounceF;
     b.bounces = 0;
@@ -590,7 +638,7 @@ export class TennisSim {
     this.afterLaunch(p.end);
     this.events.push({
       type: 'hit', end: p.end, shot: sw.shot, timing: timing.grade, mph: toMph(total), rpm: toRpm(b.spin), serve: false,
-      x: b.x, y: b.y, z: b.z, stretched: stretch > 0.5,
+      x: b.x, y: b.y, z: b.z, stretched: stretch > 0.5, onTheRun: onTheRun > 0.5,
     });
     if (this.isPractice && p.end === 'near') this.scorePractice(timing.grade);
   }
@@ -609,7 +657,9 @@ export class TennisSim {
     const tx = boxSide * clamp(2.1 + aim * boxSide * 1.5, 0.5, 3.75);
     const ty = -sign * (COURT.serviceLine - 0.9);
     const second = this.faults === 1 ? 0.84 : 1;
-    const launch = solveLaunch(b, tx, ty, spec.speed * timing.pace * second, spec, -14 * DEG);
+    const curve = spec.curve * boxSide * 0.5;
+    const skill = this.isCpu(p.end) ? CPU_LEVELS[this.cfg.cpu?.[p.end] ?? 1].servePace : 1;
+    const launch = correctForCurve(b, solveLaunch(b, tx, ty, spec.speed * timing.pace * second * skill, spec, -14 * DEG), curve, spec, tx, ty);
     const heading = Math.atan2(launch.vy, launch.vx) + timing.pull * sign * 0.8 * DEG;
     const horizontal = Math.hypot(launch.vx, launch.vy);
     const elevation = Math.atan2(launch.vz, horizontal) + timing.lift * 0.8 * DEG;
@@ -618,7 +668,7 @@ export class TennisSim {
     b.vy = Math.cos(elevation) * Math.sin(heading) * launch.speed;
     b.vz = Math.sin(elevation) * launch.speed;
     b.spin = spec.spin * timing.spin;
-    b.curve = spec.curve * boxSide * 0.5;
+    b.curve = curve;
     b.e = spec.bounceE;
     b.f = spec.bounceF;
     b.bounces = 0;
@@ -632,7 +682,7 @@ export class TennisSim {
     this.afterLaunch(p.end);
     this.events.push({
       type: 'hit', end: p.end, shot: sw.shot, timing: timing.grade, mph: toMph(launch.speed), rpm: toRpm(b.spin), serve: true,
-      x: b.x, y: b.y, z: b.z, stretched: false,
+      x: b.x, y: b.y, z: b.z, stretched: false, onTheRun: false,
     });
   }
 
@@ -702,11 +752,14 @@ export class TennisSim {
     const receiver = other(hitter);
     const onReceiverSide = b.y * endSign(receiver) > 0;
     if (b.bounces === 1) {
-      const inCourt = onReceiverSide && Math.abs(b.x) <= COURT.singlesHalf + BALL_R && Math.abs(b.y) <= COURT.halfLength + BALL_R;
+      const margin = this.isServeBall ? serviceMargin(b.x, b.y, -Math.sign(this.serveX())) : courtMargin(b.x, b.y);
+      const inCourt = onReceiverSide && isIn(margin);
+      // Close calls get a replay. A ball short of the net is not a line call, so it does not get one.
+      if (onReceiverSide && margin > -0.45 && margin < LINES.sideline) {
+        this.events.push({ type: 'linecall', x: b.x, y: b.y, margin, inCourt });
+      }
       if (this.isServeBall) {
-        const inBox = onReceiverSide && Math.abs(b.y) <= COURT.serviceLine + BALL_R
-          && Math.abs(b.x) <= COURT.singlesHalf + BALL_R && b.x * this.serveX() <= BALL_R;
-        if (!inBox) this.onFault('FAULT');
+        if (!inCourt) this.onFault('FAULT');
         return;
       }
       if (this.isPractice) {
@@ -790,7 +843,7 @@ export class TennisSim {
     this.isServeBall = false;
     this.phase = 'rally';
     this.afterLaunch('far');
-    this.events.push({ type: 'hit', end: 'far', shot: 'topspin', timing: 'none', mph: toMph(launch.speed), rpm: toRpm(this.ball.spin), serve: false, x: 0.4, y: -11.4, z: 1.1, stretched: false });
+    this.events.push({ type: 'hit', end: 'far', shot: 'topspin', timing: 'none', mph: toMph(launch.speed), rpm: toRpm(this.ball.spin), serve: false, x: 0.4, y: -11.4, z: 1.1, stretched: false, onTheRun: false });
   }
 
   private endPracticeBall(text: string, end: End) {
@@ -916,7 +969,9 @@ export class TennisSim {
     else ai.shot = 'topspin';
     const target = -Math.sign(opponent.x || (this.rng() - 0.5)) * level.aim * (0.65 + this.rng() * 0.35);
     ai.aimX = clamp(target / SHOTS[ai.shot].maxAimX, -1, 1);
-    ai.aimY = 0;
+    // Weaker players leave more short balls for you to attack. Near hits deeper with up, far with down.
+    const depth = (this.rng() - 0.65) * level.depthSpread;
+    ai.aimY = end === 'near' ? -depth : depth;
   }
 
   private steerTo(p: Player, x: number, y: number, speed: number) {
