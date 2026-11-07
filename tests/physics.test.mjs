@@ -4,6 +4,8 @@ const {
   applySpin,
   calculateServe,
   calculateShot,
+  getTimingGrade,
+  getTimingProgress,
   predictInterceptY,
   reflectY,
   BALL_SPEED_MAX,
@@ -47,6 +49,25 @@ test('charged power shots hit harder without exceeding the hard cap', () => {
   const power = calculateShot({ side: 'right', shot: 'power', hitOffset: 0.4, paddleVelocity: 0, incomingVy: 1, incomingSpeed: 7.4 });
   assert.ok(power.speed > BALL_SPEED_MAX);
   assert.ok(power.speed <= POWER_SHOT_SPEED_MAX);
+});
+
+test('timing meter rewards release in the green contact window', () => {
+  assert.equal(getTimingGrade(0.4), 'early');
+  assert.equal(getTimingGrade(0.15), 'perfect');
+  assert.equal(getTimingGrade(0.04), 'late');
+  assert.equal(getTimingGrade(null), 'none');
+  assert.ok(Math.abs(getTimingProgress(0.22) - 0.6) < 1e-8);
+  assert.ok(Math.abs(getTimingProgress(0.08) - (1 - 0.08 / 0.55)) < 1e-8);
+});
+
+test('perfectly timed charged shots gain pace and straighter aim', () => {
+  const args = { side: 'right', shot: 'power', hitOffset: 0.6, paddleVelocity: 0, incomingVy: 1, incomingSpeed: 6, charge: 80 };
+  const perfect = calculateShot({ ...args, timing: 'perfect' });
+  const late = calculateShot({ ...args, timing: 'late' });
+  const perfectAngle = Math.abs(Math.atan2(perfect.vy, Math.abs(perfect.vx)));
+  const lateAngle = Math.abs(Math.atan2(late.vy, Math.abs(late.vx)));
+  assert.ok(perfect.speed > late.speed);
+  assert.ok(perfectAngle < lateAngle);
 });
 
 test('serves move toward the receiver and aim follows paddle placement', () => {

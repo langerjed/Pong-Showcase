@@ -37,11 +37,13 @@ export interface Ball {
 }
 
 export type ShotType = 'normal' | 'slice' | 'stopspin' | 'power';
+export type ShotTiming = 'perfect' | 'early' | 'late' | 'none';
 
 export interface AnnouncerEvent {
   kind: 'point' | 'shot' | 'long-rally';
   shooter: 'PLAYER' | 'CPU' | 'P1' | 'P2';
   shot: ShotType;
+  timing?: ShotTiming;
   scoreLeft: number;
   scoreRight: number;
   rallyHits: number;

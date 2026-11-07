@@ -1,8 +1,8 @@
-import type { ShotType } from './types';
+import type { ShotTiming, ShotType } from './types';
 
 export const BALL_SPEED_MIN = 4.2;
 export const BALL_SPEED_MAX = 7.4;
-export const POWER_SHOT_SPEED_MAX = 8.2;
+export const POWER_SHOT_SPEED_MAX = 9;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -26,6 +26,8 @@ export interface ShotInput {
   paddleVelocity: number;
   incomingVy: number;
   incomingSpeed: number;
+  charge?: number;
+  timing?: ShotTiming;
 }
 
 export interface ShotResult {
@@ -33,6 +35,18 @@ export interface ShotResult {
   vy: number;
   speed: number;
   spin: number;
+}
+
+export function getTimingGrade(timeToContact: number | null): ShotTiming {
+  if (timeToContact === null || timeToContact < 0 || timeToContact > 0.55) return 'none';
+  if (timeToContact > 0.22) return 'early';
+  if (timeToContact >= 0.08) return 'perfect';
+  return 'late';
+}
+
+export function getTimingProgress(timeToContact: number | null, horizon = 0.55) {
+  if (timeToContact === null || horizon <= 0) return null;
+  return clamp(1 - timeToContact / horizon, 0, 1);
 }
 
 export function calculateShot(input: ShotInput): ShotResult {
@@ -53,8 +67,12 @@ export function calculateShot(input: ShotInput): ShotResult {
     shotSpeed *= 0.72;
     spin = -Math.sign(input.incomingVy || paddleMotion || 1) * 1.05;
   } else if (input.shot === 'power') {
-    shotSpeed = Math.min(POWER_SHOT_SPEED_MAX, speed + 1.45);
-    angle *= 0.78;
+    const charge = clamp((input.charge ?? 100) / 100, 0, 1);
+    const isPerfect = input.timing === 'perfect';
+    shotSpeed = Math.min(POWER_SHOT_SPEED_MAX, speed + 0.25 + charge * 0.7 + (isPerfect ? 0.65 : 0));
+    angle *= isPerfect ? 0.68 : 1.16;
+    if (input.timing === 'early') angle += 0.12;
+    if (input.timing === 'late') angle -= 0.12;
   }
 
   const maxAngle = input.shot === 'slice' ? 0.52 : input.shot === 'stopspin' ? 0.3 : 0.85;

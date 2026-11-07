@@ -4,10 +4,10 @@
 
 import { AudioEngine } from './audio';
 import {
-  GameState, Paddle, Ball, GoldBall, PowerUpDef, ShotType, AnnouncerEvent,
+  GameState, Paddle, Ball, GoldBall, PowerUpDef, ShotType, ShotTiming, AnnouncerEvent,
   PowerUpInstance, ActivePowerUp, Particle, Star,
 } from './types';
-import { applySpin, calculateServe, calculateShot, predictInterceptY } from './physics';
+import { applySpin, calculateServe, calculateShot, getTimingGrade, getTimingProgress, predictInterceptY } from './physics';
 
 // --- Constants ---
 const W = 800, H = 600;
@@ -90,6 +90,7 @@ export class PongEngine {
   private activePowerUps: ActivePowerUp[] = [];
   private chargeLeft = 0;
   private chargeRight = 0;
+  private pendingPowerShots: Partial<Record<'left' | 'right', { charge: number; timing: ShotTiming; expiresAt: number }>> = {};
   private playerAimHistory: number[] = [];
   private rallyHits = 0;
   private longRallyAnnounced = false;
@@ -133,7 +134,7 @@ export class PongEngine {
 
     // Input handlers
     this.keydownHandler = (e: KeyboardEvent) => this.onKeyDown(e);
-    this.keyupHandler = (e: KeyboardEvent) => { this.keys[e.key] = false; };
+    this.keyupHandler = (e: KeyboardEvent) => this.onKeyUp(e);
     document.addEventListener('keydown', this.keydownHandler);
     document.addEventListener('keyup', this.keyupHandler);
   }
@@ -248,6 +249,24 @@ export class PongEngine {
     }
   }
 
+  private onKeyUp(e: KeyboardEvent) {
+    const key = e.key.toLowerCase();
+    const side = key === 'c' ? 'right' : key === 'f' && this.twoPlayer ? 'left' : null;
+    if (side && this.state === GameState.PLAYING) {
+      const charge = side === 'left' ? this.chargeLeft : this.chargeRight;
+      const timeToContact = this.getTimeToContact(side);
+      const timing = getTimingGrade(timeToContact);
+      if (charge >= 25 && timing !== 'none') {
+        this.pendingPowerShots[side] = {
+          charge,
+          timing,
+          expiresAt: Date.now() + (timeToContact ?? 0) * 1000 + 180,
+        };
+      }
+    }
+    this.keys[e.key] = false;
+  }
+
   handleClick() {
     this.audio.init();
     if (this.state === GameState.TITLE) {
@@ -276,6 +295,7 @@ export class PongEngine {
     this.activePowerUps = [];
     this.chargeLeft = 0;
     this.chargeRight = 0;
+    this.pendingPowerShots = {};
     this.playerAimHistory = [];
     this.rallyHits = 0;
     this.longRallyAnnounced = false;
@@ -301,17 +321,50 @@ export class PongEngine {
 
   private getShotType(side: 'left' | 'right'): ShotType {
     const keys = side === 'right'
-      ? { slice: this.keys['z'] || this.keys['Z'], stopspin: this.keys['x'] || this.keys['X'], power: this.keys['c'] || this.keys['C'] }
-      : { slice: this.keys['a'] || this.keys['A'], stopspin: this.keys['d'] || this.keys['D'], power: this.keys['f'] || this.keys['F'] };
-    const charge = side === 'left' ? this.chargeLeft : this.chargeRight;
-    if (keys.power && charge >= 100) return 'power';
+      ? { slice: this.keys['z'] || this.keys['Z'], stopspin: this.keys['x'] || this.keys['X'] }
+      : { slice: this.keys['a'] || this.keys['A'], stopspin: this.keys['d'] || this.keys['D'] };
+    if (this.getPendingPowerShot(side)) return 'power';
     if (keys.stopspin) return 'stopspin';
     if (keys.slice) return 'slice';
     return 'normal';
   }
 
+  private getPendingPowerShot(side: 'left' | 'right') {
+    const pending = this.pendingPowerShots[side];
+    if (pending && Date.now() >= pending.expiresAt) {
+      delete this.pendingPowerShots[side];
+      return null;
+    }
+    return pending ?? null;
+  }
+
+  private getBallSpeedMultiplier() {
+    let speedMult = 1;
+    for (const p of this.activePowerUps) {
+      if (p.type === 'fast') speedMult = 1.25;
+      if (p.type === 'slow') speedMult = 0.72;
+    }
+    return speedMult;
+  }
+
+  private getTimeToContact(side: 'left' | 'right') {
+    const towardPaddle = side === 'right' ? this.ball.vx > 0 : this.ball.vx < 0;
+    if (!towardPaddle || this.ball.frozen) return null;
+    const paddle = side === 'right' ? this.paddleRight : this.paddleLeft;
+    const distance = side === 'right'
+      ? paddle.x - BALL_R - this.ball.x
+      : this.ball.x - paddle.x - PADDLE_W - BALL_R;
+    return Math.max(0, distance) / (Math.abs(this.ball.vx) * 60 * this.getBallSpeedMultiplier());
+  }
+
+  private updateShotCharge(dt: number) {
+    if (this.keys['c'] || this.keys['C']) this.chargeRight = Math.min(100, this.chargeRight + dt * 145);
+    if (this.twoPlayer && (this.keys['f'] || this.keys['F'])) this.chargeLeft = Math.min(100, this.chargeLeft + dt * 145);
+  }
+
   private spendPower(side: 'left' | 'right', shot: ShotType) {
     if (shot !== 'power') return;
+    delete this.pendingPowerShots[side];
     if (side === 'left') this.chargeLeft = 0;
     else this.chargeRight = 0;
   }
@@ -359,9 +412,9 @@ export class PongEngine {
     if (this.playerAimHistory.length > 12) this.playerAimHistory.shift();
   }
 
-  private announce(kind: AnnouncerEvent['kind'], shooter: AnnouncerEvent['shooter'], shot: ShotType = 'normal') {
+  private announce(kind: AnnouncerEvent['kind'], shooter: AnnouncerEvent['shooter'], shot: ShotType = 'normal', timing: ShotTiming = 'none') {
     this.onAnnouncer?.({
-      kind, shooter, shot,
+      kind, shooter, shot, timing,
       scoreLeft: this.scoreLeft,
       scoreRight: this.scoreRight,
       rallyHits: this.rallyHits,
@@ -445,9 +498,12 @@ export class PongEngine {
     if (!hit) return null;
 
     const hitOffset = ((b.y - (paddle.y + ph / 2)) / (ph / 2));
+    const pendingPower = this.getPendingPowerShot(side);
     let shot = this.getShotType(side);
+    let timing = pendingPower?.timing ?? 'none';
     if (side === 'left' && !this.twoPlayer && this.aiDifficulty === 2 && this.chargeLeft >= 100 && Math.abs(hitOffset) < 0.36) {
       shot = 'power';
+      timing = 'none';
     }
     const result = calculateShot({
       side,
@@ -456,19 +512,17 @@ export class PongEngine {
       paddleVelocity: paddle.vy,
       incomingVy: b.vy,
       incomingSpeed: Math.hypot(b.vx, b.vy),
+      charge: pendingPower?.charge ?? (side === 'left' ? this.chargeLeft : this.chargeRight),
+      timing,
     });
     this.spendPower(side, shot);
-    return { ...result, shot };
+    return { ...result, shot, timing };
   }
 
   private updateBall(b: Ball, dt: number, isExtra: boolean): boolean {
     if (b.frozen) return true;
 
-    let speedMult = 1;
-    for (const p of this.activePowerUps) {
-      if (p.type === 'fast') speedMult = 1.25;
-      if (p.type === 'slow') speedMult = 0.72;
-    }
+    const speedMult = this.getBallSpeedMultiplier();
 
     const curved = applySpin(b.vx, b.vy, b.spin, dt);
     b.vx = curved.vx;
@@ -508,7 +562,7 @@ export class PongEngine {
       this.audio.paddleHit();
       this.emitParticles(b.x, b.y, this.paddleLeft.glowColor, 12, 150, 0.4, 3);
       this.triggerShake(3);
-      if (leftHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P1' : 'CPU', leftHit.shot);
+      if (leftHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P1' : 'CPU', leftHit.shot, leftHit.timing);
     }
     const rightHit = this.ballPaddleCollision(b, this.paddleRight, 'right');
     if (rightHit) {
@@ -525,7 +579,7 @@ export class PongEngine {
       this.audio.paddleHit();
       this.emitParticles(b.x, b.y, this.paddleRight.glowColor, 12, 150, 0.4, 3);
       this.triggerShake(3);
-      if (rightHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P2' : 'PLAYER', rightHit.shot);
+      if (rightHit.shot !== 'normal') this.announce('shot', this.twoPlayer ? 'P2' : 'PLAYER', rightHit.shot, rightHit.timing);
     }
 
     // Scoring
@@ -959,17 +1013,52 @@ export class PongEngine {
     ctx.textAlign = 'center';
     ctx.fillText(`FIRST TO ${WIN_SCORE}`, W/2, H - 8);
 
+    const timingSide = this.twoPlayer && this.ball.vx < 0 ? 'left' : 'right';
+    const charge = timingSide === 'left' ? this.chargeLeft : this.chargeRight;
+    const isHolding = timingSide === 'right'
+      ? this.keys['c'] || this.keys['C']
+      : this.keys['f'] || this.keys['F'];
+    const timeToContact = this.getTimeToContact(timingSide);
+    const timing = this.getPendingPowerShot(timingSide)?.timing ?? getTimingGrade(timeToContact);
+    const timingProgress = getTimingProgress(timeToContact);
+    const showTiming = isHolding || (timeToContact !== null && timeToContact <= 0.55) || Boolean(this.getPendingPowerShot(timingSide));
+    const barX = W - 142;
+    const barWidth = 112;
+
     ctx.textAlign = 'right';
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fillStyle = 'rgba(255,255,255,0.52)';
     ctx.font = '7px "Press Start 2P", monospace';
-    ctx.fillText('POWER', W - 150, H - 45);
+    const timingPlayer = timingSide === 'right' ? (this.twoPlayer ? 'P2' : 'P1') : (this.twoPlayer ? 'P1' : 'CPU');
+    ctx.fillText(`${timingPlayer} CHARGE`, W - 150, H - 57);
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(W - 142, H - 52, 112, 8);
-    ctx.fillStyle = this.chargeRight >= 100 ? '#d7fa59' : '#60a5fa';
-    ctx.shadowBlur = this.chargeRight >= 100 ? 10 : 0;
+    ctx.fillRect(barX, H - 54, barWidth, 7);
+    ctx.fillStyle = charge >= 95 ? '#d7fa59' : '#60a5fa';
+    ctx.shadowBlur = charge >= 95 ? 10 : 0;
     ctx.shadowColor = '#d7fa59';
-    ctx.fillRect(W - 142, H - 52, 112 * (this.chargeRight / 100), 8);
+    ctx.fillRect(barX, H - 54, barWidth * (charge / 100), 7);
     ctx.shadowBlur = 0;
+
+    if (showTiming) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = timing === 'perfect' ? '#d7fa59' : 'rgba(255,255,255,0.52)';
+      ctx.font = '6px "Press Start 2P", monospace';
+      const timingLabel = this.getPendingPowerShot(timingSide)
+        ? `${timing.toUpperCase()} LOCKED`
+        : isHolding && timing === 'perfect' ? 'RELEASE NOW' : isHolding && timeToContact === null ? 'WAIT FOR BALL' : isHolding && timing === 'late' ? 'TOO LATE' : 'WATCH TIMING';
+      ctx.fillText(timingLabel, W - 150, H - 40);
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.fillRect(barX, H - 35, barWidth, 6);
+      ctx.fillStyle = 'rgba(215,250,89,0.55)';
+      ctx.fillRect(barX + barWidth * (1 - 0.22 / 0.55), H - 35, barWidth * ((0.22 - 0.08) / 0.55), 6);
+      if (timingProgress !== null) {
+        const markerX = barX + barWidth * timingProgress;
+        ctx.fillStyle = timing === 'perfect' ? '#d7fa59' : '#f5f5f0';
+        ctx.shadowBlur = timing === 'perfect' ? 8 : 0;
+        ctx.shadowColor = '#d7fa59';
+        ctx.fillRect(markerX - 2, H - 38, 4, 12);
+        ctx.shadowBlur = 0;
+      }
+    }
   }
 
   private drawGoldBall() {
@@ -1458,6 +1547,7 @@ export class PongEngine {
 
       case GameState.PLAYING:
         this.handlePaddleInput();
+        this.updateShotCharge(dt);
         this.updateAI(dt);
         this.updatePaddles(dt);
         this.updateBall(this.ball, dt, false);

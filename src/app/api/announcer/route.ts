@@ -6,6 +6,7 @@ const validKinds = new Set(['point', 'shot', 'long-rally']);
 const validShots = new Set(['normal', 'slice', 'stopspin', 'power']);
 const validPlayers = new Set(['PLAYER', 'CPU', 'P1', 'P2']);
 const validReads = new Set(['', 'high', 'middle', 'low']);
+const validTimings = new Set(['perfect', 'early', 'late', 'none']);
 
 export function GET() {
   return NextResponse.json({ enabled: Boolean(process.env.OPENAI_API_KEY) });
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid request.' }, { status: 400 });
   }
 
-  if (!validKinds.has(String(body.kind)) || !validShots.has(String(body.shot)) || !validPlayers.has(String(body.shooter)) || !validReads.has(String(body.playerRead ?? ''))) {
+  if (!validKinds.has(String(body.kind)) || !validShots.has(String(body.shot)) || !validPlayers.has(String(body.shooter)) || !validReads.has(String(body.playerRead ?? '')) || !validTimings.has(String(body.timing ?? 'none'))) {
     return NextResponse.json({ error: 'Invalid announcer event.' }, { status: 400 });
   }
 
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
     kind: body.kind,
     shooter: body.shooter,
     shot: body.shot,
+    timing: body.timing ?? 'none',
     score: `${Math.min(11, Math.max(0, Number(body.scoreLeft) || 0))}-${Math.min(11, Math.max(0, Number(body.scoreRight) || 0))}`,
     rallyHits: Math.min(100, Math.max(0, Number(body.rallyHits) || 0)),
     playerRead: body.playerRead,
@@ -44,7 +46,7 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: process.env.OPENAI_ANNOUNCER_MODEL || 'gpt-6-luna',
-        instructions: 'You are the energetic, concise play-by-play announcer for a friendly arcade tennis game. Write one vivid sentence under 18 words. Use only the supplied game facts. Keep it fun, varied, and family-friendly. Do not mention being an AI or invent events.',
+        instructions: 'You are the energetic, concise play-by-play announcer for a friendly arcade tennis game. Write one vivid sentence under 18 words. Celebrate perfect timing distinctly. Use only the supplied game facts. Keep it fun, varied, and family-friendly. Do not mention being an AI or invent events.',
         input: JSON.stringify(gameState),
         max_output_tokens: 48,
         store: false,

@@ -55,7 +55,7 @@ export default function Home() {
             <div className="control-divider" />
             <div className="control-item"><span className="keycap">X</span><span className="control-label"><strong>STOP-SPIN</strong><small>DROP THE PACE</small></span></div>
             <div className="control-divider" />
-            <div className="control-item"><span className="keycap">C</span><span className="control-label"><strong>POWER</strong><small>FILL THE METER</small></span></div>
+            <div className="control-item"><span className="keycap">C</span><span className="control-label"><strong>POWER</strong><small>HOLD, RELEASE IN GREEN</small></span></div>
             <div className="control-divider" />
             <div className="control-item"><span className="keycap wide">SPACE</span><span className="control-label"><strong>SERVE</strong><small>AIM WITH PADDLE</small></span></div>
             <div className="control-spacer" />

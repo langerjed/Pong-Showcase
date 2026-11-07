@@ -37,8 +37,8 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ## Game controls
 
-- Player vs CPU: Arrow keys move, `Z` slices, `X` uses stop-spin, `C` spends a full power meter, and `Space` serves.
-- Local two-player: Player 1 uses `W`/`S` and `A`/`D`/`F`; Player 2 uses the arrow keys and `Z`/`X`/`C`.
+- Player vs CPU: Arrow keys move, `Z` slices, `X` uses stop-spin, hold `C` before contact and release in the green timing zone for a perfect power shot, and `Space` serves.
+- Local two-player: Player 1 uses `W`/`S` and `A`/`D`/`F`; Player 2 uses the arrow keys and `Z`/`X`/`C`. Hold `F` or `C` to charge, then release near contact for better timing.
 - Toggle spoken play-by-play with the Voice button.
 
 ## Optional AI announcer
