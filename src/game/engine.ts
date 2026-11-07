@@ -5,6 +5,8 @@
 import { AudioEngine } from './audio';
 import { GameState } from './types';
 import type { AnnouncerEvent, ShotTiming, ShotType } from './types';
+import { Commentator, pointSituation } from './commentary';
+import type { Situation } from './commentary';
 import { InputDevice, mapGamepads, padEnd, shotForKey, SIDE_KEYS } from './input';
 import { CourtRenderer, H, project, SHOT_COLORS, W } from './render';
 import { REACH, TennisSim } from './sim';
@@ -41,6 +43,10 @@ export class PongEngine {
   onStateChange?: (state: GameState) => void;
   onAnnouncer?: (event: AnnouncerEvent) => void;
   onInputChange?: (device: InputDevice) => void;
+  /** A line for the British commentator to speak: match start and big points only. */
+  onCommentary?: (line: string) => void;
+  /** The commentator stops talking when a match is abandoned. */
+  onCommentaryReset?: () => void;
 
   private pauseSelection = 0;
   private resumeState: GameState = GameState.PLAYING;
@@ -73,6 +79,12 @@ export class PongEngine {
   private hitStop = 0;
   private shake = 0;
   private longRallyCalled = false;
+
+  // Commentary
+  private commentator: Commentator | null = null;
+  private situation: Situation | null = null;
+  private situationKey = '';
+  private servedBy: End = 'near';
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -333,6 +345,13 @@ export class PongEngine {
       cpu: twoPlayer || practice ? {} : { far: this.aiDifficulty },
       firstServer: 'near',
     });
+    this.onCommentaryReset?.();
+    this.commentator = new Commentator(this.spokenNames());
+    this.situation = null;
+    this.situationKey = this.scoreKey();
+    this.servedBy = this.sim.server;
+    const detail = twoPlayer ? '' : `, set to ${AI_NAMES[this.aiDifficulty].toLowerCase()} today`;
+    this.onCommentary?.(this.commentator.opening(practice, detail));
     if (practice) {
       try {
         this.sim.practice.best = parseInt(localStorage.getItem(PRACTICE_BEST_KEY) || '0') || 0;
@@ -350,6 +369,8 @@ export class PongEngine {
   private resumeGame() { this.setState(this.resumeState); }
 
   private quitToMenu() {
+    this.onCommentaryReset?.();
+    this.commentator = null;
     this.sim = null;
     this.practice = false;
     this.setState(GameState.MODE_SELECT);
@@ -374,6 +395,44 @@ export class PongEngine {
     if (this.practice) return end === 'near' ? 'YOU' : 'COACH';
     if (this.twoPlayer) return end === 'far' ? 'P1' : 'P2';
     return end === 'near' ? 'YOU' : `CPU ${AI_NAMES[this.aiDifficulty]}`;
+  }
+
+  private spokenNames() {
+    return this.twoPlayer ? { near: 'player two', far: 'player one' } : { near: 'our player', far: 'the computer' };
+  }
+
+  private scoreKey() {
+    const sim = this.sim;
+    return sim ? `${sim.points.near}-${sim.points.far}-${sim.games.near}-${sim.games.far}` : '';
+  }
+
+  /** Decides whether anything in this frame is worth saying out loud. */
+  private commentate(events: SimEvent[]) {
+    const sim = this.sim;
+    if (!sim || !this.commentator || this.practice) return;
+    const point = events.find(event => event.type === 'point');
+    if (point && point.type === 'point') {
+      const line = this.commentator.result({
+        winner: point.winner,
+        reason: point.reason,
+        rally: point.rally,
+        situation: this.situation,
+        gameWon: events.some(event => event.type === 'game'),
+        matchWon: events.some(event => event.type === 'match'),
+        server: this.servedBy,
+        games: sim.games,
+      });
+      if (line) this.onCommentary?.(line);
+    }
+    if (sim.phase === 'serve' && sim.faults === 0 && !sim.matchWinner) {
+      const key = this.scoreKey();
+      if (key !== this.situationKey) {
+        this.situationKey = key;
+        this.servedBy = sim.server;
+        this.situation = pointSituation({ points: sim.points, games: sim.games, server: sim.server, gamesToWin: sim.gamesToWin });
+        if (this.situation) this.onCommentary?.(this.commentator.situation(this.situation));
+      }
+    }
   }
 
   private shooterOf(end: End): AnnouncerEvent['shooter'] {
@@ -570,6 +629,7 @@ export class PongEngine {
       const events = this.sim.events;
       this.sim.events = [];
       events.forEach(event => this.handleEvent(event));
+      this.commentate(events);
       if (this.practice) {
         try {
           localStorage.setItem(PRACTICE_BEST_KEY, String(this.sim.practice.best));

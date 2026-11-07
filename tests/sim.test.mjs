@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 const { correctForCurve, COURT, courtMargin, gradeTiming, isIn, LINES, MARK_RADIUS, netHeightAt, serviceMargin, SHOTS, solveLaunch, stepBall, TennisSim, TOSS_IDEAL, toMph, toRpm, WINDOW } = await import('../.test-build/sim.js');
 const { applyDeadzone, mapGamepads, padEnd, shotForKey } = await import('../.test-build/input.js');
 const { fallbackCommentary } = await import('../.test-build/announcer.js');
+const { Commentator, pointSituation } = await import('../.test-build/commentary.js');
 
 const seeded = (seed = 7) => () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 
@@ -279,4 +280,84 @@ test('a perfectly timed shot aimed for the lines lands in, for every stroke and 
       }
     }
   }
+});
+
+const score = (near, far, extra = {}) => ({ points: { near, far }, games: { near: 0, far: 0 }, server: 'near', gamesToWin: 3, ...extra });
+const names = { near: 'our player', far: 'the computer' };
+
+test('ordinary points are not big points', () => {
+  for (const [near, far] of [[0, 0], [1, 0], [2, 2], [0, 2]]) assert.equal(pointSituation(score(near, far)), null);
+});
+
+test('big points are recognised for the right player', () => {
+  assert.deepEqual(pointSituation(score(3, 3)), { kind: 'deuce', end: null, chances: 0, advantage: false, repeatDeuce: false });
+  assert.equal(pointSituation(score(4, 4)).repeatDeuce, true);
+  const hold = pointSituation(score(3, 1));
+  assert.equal(hold.kind, 'game-point');
+  assert.equal(hold.chances, 2);
+  const brk = pointSituation(score(1, 3));
+  assert.equal(brk.kind, 'break-point');
+  assert.equal(brk.end, 'far');
+  assert.equal(pointSituation(score(3, 4)).advantage, true);
+  const match = pointSituation(score(3, 0, { games: { near: 2, far: 1 } }));
+  assert.equal(match.kind, 'match-point');
+  assert.equal(match.chances, 3);
+  assert.equal(pointSituation(score(3, 0, { games: { near: 0, far: 2 } })).kind, 'game-point', 'only the leader of the game matters');
+});
+
+test('the commentator opens the match and calls big points', () => {
+  const voice = new Commentator(names);
+  assert.match(voice.opening(false, ', set to hard today'), /Centre Court.*Our player takes on the computer, set to hard today/);
+  assert.match(voice.situation(pointSituation(score(1, 3))), /break point/i);
+  assert.match(voice.situation(pointSituation(score(3, 3))), /deuce/i);
+  assert.match(voice.situation(pointSituation(score(3, 0, { games: { near: 2, far: 0 } }))), /three match points/i);
+  assert.match(voice.situation(pointSituation(score(4, 3, { games: { near: 2, far: 0 } }))), /advantage our player.*match point/i);
+});
+
+test('the commentator stays quiet on ordinary points and speaks on big results', () => {
+  const voice = new Commentator(names);
+  const base = { winner: 'near', reason: 'winner', rally: 3, situation: null, gameWon: false, matchWon: false, server: 'near', games: { near: 0, far: 0 } };
+  assert.equal(voice.result(base), null);
+  assert.match(voice.result({ ...base, rally: 12 }), /rally/i);
+  assert.match(voice.result({ ...base, gameWon: true, winner: 'far', games: { near: 0, far: 1 } }), /break.*One game to nil, the computer/i);
+  assert.match(voice.result({ ...base, gameWon: true, games: { near: 1, far: 1 } }), /one games all/i);
+  assert.match(voice.result({ ...base, matchWon: true, gameWon: true }), /game, set and match, our player/i);
+  const savedBreak = { kind: 'break-point', end: 'far', chances: 1, advantage: false, repeatDeuce: false };
+  assert.match(voice.result({ ...base, situation: savedBreak }), /saved/i);
+  assert.match(voice.result({ ...base, situation: savedBreak, reason: 'ace' }), /ace/i);
+  assert.equal(voice.result({ ...base, situation: { kind: 'game-point', end: 'far', chances: 3, advantage: false, repeatDeuce: false } }), null, 'one of three game points is not yet a save');
+});
+
+test('the commentator does not repeat itself straight away', () => {
+  const voice = new Commentator(names);
+  const situation = pointSituation(score(3, 2));
+  assert.notEqual(voice.situation(situation), voice.situation(situation));
+});
+
+test('a real match produces commentary only on big moments', () => {
+  const sim = new TennisSim({ cpu: { near: 1, far: 1 }, rng: seeded(5) });
+  let total = 0, big = 0, points = 0;
+  let key = '', situation = null, server = sim.server;
+  const voice = new Commentator(names);
+  for (let i = 0; i < 120 * 60 * 40 && !sim.matchWinner; i++) {
+    sim.tick(1 / 120);
+    const events = sim.events;
+    sim.events = [];
+    const point = events.find(e => e.type === 'point');
+    if (point) {
+      points++;
+      const line = voice.result({ winner: point.winner, reason: point.reason, rally: point.rally, situation, gameWon: events.some(e => e.type === 'game'), matchWon: events.some(e => e.type === 'match'), server, games: sim.games });
+      if (line) total++;
+    }
+    const now = `${sim.points.near}-${sim.points.far}-${sim.games.near}-${sim.games.far}`;
+    if (sim.phase === 'serve' && sim.faults === 0 && now !== key) {
+      key = now;
+      server = sim.server;
+      situation = pointSituation({ points: sim.points, games: sim.games, server: sim.server, gamesToWin: sim.gamesToWin });
+      if (situation) { big++; assert.ok(voice.situation(situation).length > 5); }
+    }
+  }
+  assert.ok(sim.matchWinner);
+  assert.ok(big >= 3, `big points ${big}`);
+  assert.ok(total >= 3 && total < points, `${total} result lines over ${points} points`);
 });

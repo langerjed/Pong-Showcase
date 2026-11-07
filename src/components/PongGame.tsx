@@ -19,28 +19,82 @@ const TOUCH_SHOTS = [
   { action: 'drop', label: 'DROP' },
 ] as const;
 
+const VOICE_KEY = 'pong_commentary_voice';
+const PREFERRED_VOICES = ['Daniel', 'Arthur', 'Oliver', 'Google UK English Male', 'Microsoft Ryan', 'Microsoft George', 'Jamie'];
+
+/** The browser's own British voice, free and on-device; a named male voice first, then any en-GB voice. */
+function pickBritishVoice(voices: SpeechSynthesisVoice[]) {
+  const british = voices.filter(voice => voice.lang.replace('_', '-').toLowerCase().startsWith('en-gb'));
+  for (const name of PREFERRED_VOICES) {
+    const match = british.find(voice => voice.name.includes(name));
+    if (match) return match;
+  }
+  return british[0] ?? null;
+}
+
 export default function PongGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<PongEngine | null>(null);
   const aiAnnouncerRef = useRef(false);
-  const voiceEnabledRef = useRef(false);
+  const speechQueueRef = useRef<string[]>([]);
+  const speakingRef = useRef(false);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAiCallRef = useRef(0);
   const requestIdRef = useRef(0);
   const [commentary, setCommentary] = useState('Pick a mode and step onto the court.');
   const [aiEnabled, setAiEnabled] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(VOICE_KEY) !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const voiceEnabledRef = useRef(voiceEnabled);
   const [inputDevice, setInputDevice] = useState<InputDevice>(() => (window.matchMedia?.('(pointer: coarse)').matches ? 'touch' : 'keyboard'));
   const [touchSeen, setTouchSeen] = useState(inputDevice === 'touch');
   const [gameState, setGameState] = useState<GameState>(GameState.TITLE);
   const [twoPlayer, setTwoPlayer] = useState(false);
 
-  const speak = useCallback((line: string) => {
-    if (!voiceEnabledRef.current || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
+  const stopSpeech = useCallback(() => {
+    speechQueueRef.current = [];
+    speakingRef.current = false;
+    if (watchdogRef.current) clearTimeout(watchdogRef.current);
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }, []);
+
+  const playNext = useCallback(() => {
+    if (speakingRef.current || !('speechSynthesis' in window)) return;
+    const line = speechQueueRef.current.shift();
+    if (!line) return;
     const utterance = new SpeechSynthesisUtterance(line);
-    utterance.rate = 1.04;
-    utterance.pitch = 0.92;
+    const voice = pickBritishVoice(window.speechSynthesis.getVoices());
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang ?? 'en-GB';
+    utterance.rate = 0.98;
+    utterance.pitch = 0.95;
+    const finished = () => {
+      if (utteranceRef.current !== utterance) return;
+      speakingRef.current = false;
+      if (watchdogRef.current) clearTimeout(watchdogRef.current);
+      playNextRef.current();
+    };
+    utterance.onend = finished;
+    utterance.onerror = finished;
+    utteranceRef.current = utterance;
+    speakingRef.current = true;
+    // Some browsers never report the end of speech, which must not silence the commentator for good.
+    watchdogRef.current = setTimeout(finished, 2500 + line.length * 110);
     window.speechSynthesis.speak(utterance);
+  }, []);
+  const playNextRef = useRef(playNext);
+
+  /** Lines wait their turn so nothing is cut off mid-sentence; only the newest waiting line is kept. */
+  const speak = useCallback((line: string) => {
+    if (!voiceEnabledRef.current) return;
+    speechQueueRef.current = [line];
+    playNextRef.current();
   }, []);
 
   useEffect(() => {
@@ -66,10 +120,13 @@ export default function PongGame() {
         if (rect.top < 0 || rect.bottom > window.innerHeight) canvas.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
     };
+    engine.onCommentary = line => {
+      setCommentary(line);
+      speak(line);
+    };
+    engine.onCommentaryReset = stopSpeech;
     engine.onAnnouncer = (event: AnnouncerEvent) => {
-      const localLine = fallbackCommentary(event);
-      setCommentary(localLine);
-      speak(localLine);
+      setCommentary(fallbackCommentary(event));
 
       if (event.localOnly || !aiAnnouncerRef.current || Date.now() - lastAiCallRef.current < 2800) return;
       lastAiCallRef.current = Date.now();
@@ -83,7 +140,6 @@ export default function PongGame() {
         const data = await response.json() as { commentary?: string };
         if (!active || requestId !== requestIdRef.current || !data.commentary) return;
         setCommentary(data.commentary);
-        speak(data.commentary);
       }).catch(() => undefined);
     };
     engine.start();
@@ -98,11 +154,11 @@ export default function PongGame() {
 
     return () => {
       active = false;
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      stopSpeech();
       engine.destroy();
       engineRef.current = null;
     };
-  }, [speak]);
+  }, [speak, stopSpeech]);
 
   const handleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
     engineRef.current?.handleClick(event.clientX, event.clientY);
@@ -130,7 +186,7 @@ export default function PongGame() {
         className="game-canvas"
       />
       <div className="announcer-chip" aria-live="polite" aria-atomic="true">
-        <div className="announcer-meta"><span className="announcer-light" /> ANNOUNCER <span>{aiEnabled ? 'AI LIVE' : 'LOCAL CALLS'}</span></div>
+        <div className="announcer-meta"><span className="announcer-light" /> COMMENTARY <span>{aiEnabled ? 'AI LIVE' : 'LOCAL CALLS'}</span></div>
         <p>{commentary}</p>
         <button
           type="button"
@@ -141,7 +197,10 @@ export default function PongGame() {
             const enabled = !voiceEnabled;
             voiceEnabledRef.current = enabled;
             setVoiceEnabled(enabled);
-            if (!enabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+            try {
+              localStorage.setItem(VOICE_KEY, enabled ? 'on' : 'off');
+            } catch { /* ignore */ }
+            if (!enabled) stopSpeech();
             if (enabled) speak(commentary);
           }}
         >

@@ -47,7 +47,7 @@ A tennis game with a 3D ball, a broadcast camera, and real scoring (15-30-40, de
 - **Two players:** P1 (far end) uses `WASD` with `E` `R` `Q` `G` `F`. P2 (near end) uses the arrows with `V` `C` `Z` `B` `X`.
 - **Controller:** stick moves and aims, `A` topspin, `X` flat, `B` slice, `Y` lob, `RB`/`RT` drop, `Start` pauses. In two-player, the first controller is P1.
 - **Touch:** drag on the court to move, and hold and release the on-screen shot buttons.
-- Toggle spoken play-by-play with the Voice button.
+- A British commentator speaks at the start of a match and on big points, using your browser's built-in British voice. Turn it off with the Voice button.
 
 ## Optional AI announcer
 

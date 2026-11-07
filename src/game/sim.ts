@@ -348,6 +348,8 @@ export class TennisSim {
     else this.setupPoint();
   }
 
+  get gamesToWin() { return this.cfg.gamesToWin ?? 3; }
+
   isCpu(end: End) { return this.cfg.cpu?.[end] !== undefined; }
 
   /** "30", "AD" and so on for the scoreboard. */
